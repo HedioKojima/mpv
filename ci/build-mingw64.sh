@@ -189,8 +189,9 @@ _ffmpeg () {
         --pkg-config=pkg-config --target-os=mingw32 --enable-gpl
         --enable-cross-compile --cross-prefix=$TARGET- --arch=${TARGET%%-*}
         --cc="$CC" --cxx="$CXX" $at_flags
-        --disable-{doc,programs,debug,avdevice,muxers,devices,bsfs,filters,encoders}
+        --disable-{doc,programs,debug,avdevice,devices,filters,encoders}
         --disable-demuxer=matroska
+        --enable-encoder=png,mjpeg
         --disable-decoder=aac_fixed,ac3_fixed,mp1,mp2,mp3,mp3adu,mp3on4
         --enable-filter=bwdif,dynaudnorm,loudnorm,rotate,vflip
         --enable-libdav1d
