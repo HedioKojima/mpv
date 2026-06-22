@@ -25,7 +25,7 @@ export AR=$TARGET-ar
 export NM=$TARGET-nm
 export RANLIB=$TARGET-ranlib
 
-export CFLAGS="-O3 -ffast-math -pipe -Wall"
+export CFLAGS="-O3 -pipe -Wall"
 export LDFLAGS="-fstack-protector-strong"
 
 . ./ci/build-common.sh
