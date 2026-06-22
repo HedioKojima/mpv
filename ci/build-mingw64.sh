@@ -25,14 +25,10 @@ export AR=$TARGET-ar
 export NM=$TARGET-nm
 export RANLIB=$TARGET-ranlib
 
-export CFLAGS="-O2 -pipe -Wall"
+export CFLAGS="-O3 -ffast-math -pipe -Wall"
 export LDFLAGS="-fstack-protector-strong"
 
 . ./ci/build-common.sh
-
-if [[ "$TARGET" == "i686-"* ]]; then
-    export WINEPATH="`$CC -print-file-name=`;/usr/$TARGET/lib"
-fi
 
 # anything that uses pkg-config
 export PKG_CONFIG_SYSROOT_DIR="$prefix_dir"
@@ -146,7 +142,7 @@ function build_if_missing {
 
 _iconv () {
     local ver=1.19
-    gettar "https://ftpmirror.gnu.org/gnu/libiconv/libiconv-${ver}.tar.gz"
+    gettar "https://www.mirrorservice.org/sites/ftp.gnu.org/gnu/libiconv/libiconv-${ver}.tar.gz"
     builddir libiconv-${ver}
     ../configure --host=$TARGET $at_flags
     makeplusinstall
@@ -167,7 +163,7 @@ _zlib_ng () {
 _zlib_ng_mark=lib/libzlib.dll.a
 
 _dav1d () {
-    [ -d dav1d ] || $gitclone https://code.videolan.org/videolan/dav1d.git
+    [ -d dav1d ] || $gitclone https://github.com/videolan/dav1d.git
     builddir dav1d
     meson setup .. --cross-file "$prefix_dir/crossfile" \
         -Denable_{tools,tests}=false
@@ -186,16 +182,6 @@ _lcms2 () {
 }
 _lcms2_mark=lib/liblcms2.dll.a
 
-_amf_headers () {
-    local ver=1.5.2
-    gettar "https://github.com/GPUOpen-LibrariesAndSDKs/AMF/releases/download/v${ver}/AMF-headers-v${ver}.tar.gz" amf-headers-v${ver}
-    pushd amf-headers-v${ver}
-    mkdir -p "$prefix_dir/include"
-    cp -r AMF "$prefix_dir/include/"
-    popd
-}
-_amf_headers_mark=include/AMF/core/Version.h
-
 _ffmpeg () {
     [ -d ffmpeg ] || $gitclone https://github.com/FFmpeg/FFmpeg.git ffmpeg
     builddir ffmpeg
@@ -203,10 +189,13 @@ _ffmpeg () {
         --pkg-config=pkg-config --target-os=mingw32 --enable-gpl
         --enable-cross-compile --cross-prefix=$TARGET- --arch=${TARGET%%-*}
         --cc="$CC" --cxx="$CXX" $at_flags
-        --disable-{doc,programs}
-        --enable-muxer=spdif --enable-encoder=mjpeg,png --enable-libdav1d
+        --disable-{doc,programs,debug,avdevice,muxers,devices,bsfs,filters,encoders}
+        --disable-demuxer=matroska
+        --disable-decoder=aac_fixed,ac3_fixed,mp1,mp2,mp3,mp3adu,mp3on4
+        --enable-filter=bwdif,dynaudnorm,loudnorm,rotate,vflip
+        --enable-libdav1d
     )
-    pkg-config vulkan && args+=(--enable-vulkan --enable-libshaderc)
+    pkg-config vulkan && args+=(--disable-vulkan --enable-libshaderc)
     ../configure "${args[@]}"
     makeplusinstall
     popd
@@ -236,37 +225,11 @@ _spirv_cross () {
 }
 _spirv_cross_mark=lib/libspirv-cross-c-shared.dll.a
 
-_nv_headers () {
-    [ -d nv-codec-headers ] || $gitclone https://github.com/FFmpeg/nv-codec-headers
-    pushd nv-codec-headers
-    makeplusinstall
-    popd
-}
-_nv_headers_mark=include/ffnvcodec/dynlink_loader.h
-
-_vulkan_headers () {
-    [ -d Vulkan-Headers ] || $gitclone https://github.com/KhronosGroup/Vulkan-Headers
-    builddir Vulkan-Headers
-    cmake .. "${cmake_args[@]}"
-    makeplusinstall
-    popd
-}
-_vulkan_headers_mark=include/vulkan/vulkan.h
-
-_vulkan_loader () {
-    [ -d Vulkan-Loader ] || $gitclone https://github.com/KhronosGroup/Vulkan-Loader
-    builddir Vulkan-Loader
-    cmake .. "${cmake_args[@]}" -DUSE_GAS=ON
-    makeplusinstall
-    popd
-}
-_vulkan_loader_mark=lib/libvulkan-1.dll.a
-
 _libplacebo () {
-    [ -d libplacebo ] || $gitclone https://code.videolan.org/videolan/libplacebo.git
+    [ -d libplacebo ] || $gitclone https://github.com/haasn/libplacebo.git
     builddir libplacebo
     meson setup .. --cross-file "$prefix_dir/crossfile" \
-        -Ddemos=false -D{opengl,d3d11,lcms}=enabled
+        -Ddemos=false -Dvulkan=disabled -D{d3d11,lcms}=enabled
     makeplusinstall
     popd
 }
@@ -346,19 +309,16 @@ _curl () {
 }
 _curl_mark=lib/libcurl.dll.a
 
-for x in iconv zlib-ng shaderc spirv-cross amf-headers nv-headers dav1d lcms2; do
+for x in iconv zlib-ng shaderc spirv-cross dav1d lcms2; do
     build_if_missing $x
 done
-if [[ "$TARGET" != "i686-"* ]]; then
+if [[ "$TARGET" != "x86_64-"* ]]; then
     build_if_missing vulkan-headers
     build_if_missing vulkan-loader
 fi
 for x in ffmpeg libplacebo freetype fribidi harfbuzz libass luajit curl; do
     build_if_missing $x
 done
-if [[ "$TARGET" != "i686-"* ]]; then
-    build_if_missing subrandr
-fi
 
 ## mpv
 
@@ -380,7 +340,7 @@ mpv_args=(
     -Dmujs:werror=false
     -Dmujs:default_library=static
     -Dlua=luajit
-    -D{amf,shaderc,spirv-cross,d3d11,javascript,libcurl}=enabled
+    -D{shaderc,spirv-cross,d3d11,javascript,libcurl}=enabled
 )
 meson setup $build "${mpv_args[@]}"
 meson compile -C $build
@@ -388,7 +348,7 @@ meson compile -C $build
 if [ "$2" = pack ]; then
     mkdir -p artifact/tmp
     echo "Copying:"
-    cp -pv $build/mpv.com $build/mpv.exe etc/mpv-*.bat artifact/
+    cp -pv $build/mpv.com $build/mpv.exe artifact/
 
     echo "Adding DLLs:"
     # grab everything we can get our hands on

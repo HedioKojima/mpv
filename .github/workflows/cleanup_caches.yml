@@ -1,13 +1,9 @@
 name: Cleanup caches
 
 on:
-  workflow_run:
+  workflow_dispatch:
     workflows: [build]
     types: [completed]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
 
 permissions:
   actions: write
@@ -17,10 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          gh cache list -L 100 --json id,key,ref -S last_accessed_at -O desc --jq '
+          gh cache list -L 1 --json id,key,ref -S last_accessed_at -O desc --jq '
             map(select(.key | startswith("x86_64-w64-mingw32-") or
-                              startswith("i686-w64-mingw32-") or
-                              startswith("aarch64-pc-windows-msvc-") or
                               startswith("x86_64-pc-windows-msvc-"))) |
             group_by(.ref) |
             map({
