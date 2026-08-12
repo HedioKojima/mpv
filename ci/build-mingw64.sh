@@ -214,6 +214,7 @@ _dav1d () {
     builddir dav1d
 
     meson setup .. --cross-file "$prefix_dir/crossfile" \
+        --buildtype=release \
         -Denable_{tools,tests}=false
 
     makeplusinstall
