@@ -284,8 +284,19 @@ _shaderc () {
     builddir shaderc
 
     cmake .. "${cmake_args[@]}" \
+        -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
-        -DSHADERC_SKIP_TESTS=ON
+        -DSHADERC_SKIP_TESTS=ON \
+        -DBUILD_EXTERNAL=OFF \
+        -DDISABLE_EXCEPTIONS=ON \
+        -DDISABLE_RTTI=ON \
+        -DENABLE_HLSL=OFF \
+        -DSHADERC_ENABLE_HLSL=OFF \
+        -DSHADERC_ENABLE_WERROR_COMPILE=OFF \
+        -DSHADERC_SKIP_COPYRIGHT_CHECK=ON \
+        -DSHADERC_SKIP_EXAMPLES=ON \
+        -DSHADERC_SKIP_EXECUTABLES=ON \
+        -DSHADERC_SKIP_INSTALL=ON
 
     makeplusinstall
     popd
@@ -301,8 +312,17 @@ _spirv_cross () {
     builddir SPIRV-Cross
 
     cmake .. "${cmake_args[@]}" \
+        -DCMAKE_BUILD_TYPE=Release \
         -DSPIRV_CROSS_SHARED=ON \
-        -DSPIRV_CROSS_{CLI,STATIC}=OFF
+        -DSPIRV_CROSS_{CLI,STATIC}=OFF \
+        -DSPIRV_CROSS_ENABLE_CPP=OFF \
+        -DSPIRV_CROSS_ENABLE_C_API=ON \
+        -DSPIRV_CROSS_ENABLE_GLSL=ON \
+        -DSPIRV_CROSS_ENABLE_HLSL=ON \
+        -DSPIRV_CROSS_ENABLE_MSL=OFF \
+        -DSPIRV_CROSS_ENABLE_REFLECT=OFF \
+        -DSPIRV_CROSS_ENABLE_TESTS=OFF \
+        -DSPIRV_CROSS_ENABLE_UTIL=OFF
 
     makeplusinstall
     popd
