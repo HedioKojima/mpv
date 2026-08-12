@@ -256,8 +256,10 @@ _ffmpeg () {
         --cc="ccache $CC"
         --cxx="ccache $CXX"
         $at_flags
-        --disable-{doc,programs}
+        --disable-{doc,programs,debug,avdevice,devices,filters,encoders}
+        --disable-demuxer=matroska
         --enable-muxer=spdif
+        --disable-decoder=aac_fixed,ac3_fixed,mp1,mp2,mp3,mp3adu,mp3on4
         --enable-encoder=mjpeg,png
         --enable-libdav1d
     )
@@ -362,7 +364,7 @@ _libplacebo () {
 
     meson setup .. --cross-file "$prefix_dir/crossfile" \
         -Ddemos=false \
-        -D{opengl,d3d11,lcms}=enabled
+        -D{d3d11,lcms}=enabled
 
     makeplusinstall
     popd
