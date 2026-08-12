@@ -384,6 +384,7 @@ _libplacebo () {
     builddir libplacebo
 
     meson setup .. --cross-file "$prefix_dir/crossfile" \
+        --buildtype=release \
         -Ddemos=false \
         -D{d3d11,lcms}=enabled
 
@@ -432,6 +433,7 @@ _harfbuzz () {
     builddir harfbuzz
 
     meson setup .. --cross-file "$prefix_dir/crossfile" \
+        --buildtype=release \
         -Dtests=disabled
 
     makeplusinstall
@@ -447,7 +449,10 @@ _libass () {
 
     builddir libass
 
-    meson setup .. --cross-file "$prefix_dir/crossfile"
+    meson setup .. --cross-file "$prefix_dir/crossfile" \
+        --buildtype=release \
+        -Dprofile=disabled \
+        -Dtest=disabled
 
     makeplusinstall
     popd
