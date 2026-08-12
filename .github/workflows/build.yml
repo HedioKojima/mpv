@@ -13,7 +13,6 @@ jobs:
 
     env:
       TARGET: x86_64-w64-mingw32
-      LLVM_MINGW_CRT: ucrt
 
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -57,7 +56,7 @@ jobs:
       - name: Install llvm-mingw
         run: |
           LLVM_MINGW_ARCHIVE="llvm-mingw-latest-ucrt-linux-x86_64.tar.xz"
-+         LLVM_MINGW_URL="https://github.com/eko5624/toolchain/releases/download/toolchain/${LLVM_MINGW_ARCHIVE}"
+          LLVM_MINGW_URL="https://github.com/eko5624/toolchain/releases/download/toolchain/${LLVM_MINGW_ARCHIVE}"
 
           echo "Downloading:"
           echo "$LLVM_MINGW_URL"
