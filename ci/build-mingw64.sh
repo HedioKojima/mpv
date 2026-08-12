@@ -35,8 +35,8 @@ export WINDRES="$TARGET-windres"
 export DLLTOOL="$TARGET-dlltool"
 
 # Optimization
-export CFLAGS="-O3 -pipe -Wall"
-export CXXFLAGS="-O3 -pipe -Wall"
+export CFLAGS="-O3 -pipe -Wall -Wno-error=switch"
+export CXXFLAGS="-O3 -pipe -Wall -Wno-error=switch"
 export LDFLAGS="-fstack-protector-strong -fuse-ld=lld"
 
 . ./ci/build-common.sh
