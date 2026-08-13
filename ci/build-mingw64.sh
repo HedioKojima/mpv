@@ -44,17 +44,15 @@ export STRIP="$TARGET-strip"
 export WINDRES="$TARGET-windres"
 export DLLTOOL="$TARGET-dlltool"
 
-# The prefixed binutils (ar/nm/ranlib/strip/dlltool/windres) live in a
-# separate bin/ directory next to the compiler. Derive it from the gcc
-# location so the build does not depend on how the runner environment
-# was configured.
+# gcc-mcf places gcc/g++, windres, ar, nm, ranlib, strip and dlltool
+# in the same ucrt64/bin directory, for example:
+#
+#   /c/gcc-mcf/ucrt64/bin
+#
+# Do not assume a separate ${TARGET}/bin directory.
 if command -v "$TARGET-gcc" >/dev/null; then
     gcc_bin_dir="$(dirname "$(command -v "$TARGET-gcc")")"
-    gcc_toolbin="$(dirname "$gcc_bin_dir")/$TARGET/bin"
-
-    if [ -d "$gcc_toolbin" ]; then
-        export PATH="$gcc_toolbin:$PATH"
-    fi
+    export PATH="$gcc_bin_dir:$PATH"
 fi
 
 # ---------------------------------------------------------------------------
@@ -187,7 +185,7 @@ function gettar {
         cachename=
     else
         # wget from gcc-mcf is the primary downloader.
-        # Fall back to Git Bash curl in case wget cannot establish TLS.
+        # Fall back to Git Bash curl in case the toolchain wget lacks CA certs.
         $wget "$1" -O "$fname" || curl -fL "$1" -o "$fname" || return 1
     fi
 
@@ -538,7 +536,6 @@ _curl () {
 
 _curl_mark=lib/libcurl.dll.a
 
-
 # ---------------------------------------------------------------------------
 # Build dependencies
 # ---------------------------------------------------------------------------
@@ -626,8 +623,7 @@ if [ "$2" = pack ]; then
     #   libstdc++-6.dll
     #   libmcfgthread-2.dll
     #
-    # Do not attempt to package libssp-0.dll: gcc-mcf does not use a shared
-    # libssp runtime in the same way as some other MinGW distributions.
+    # Do not attempt to package libssp-0.dll.
     GCC_MCF_BIN_DIR=$(dirname "$(command -v ${TARGET}-gcc)")
 
     echo "Runtime DLL dir: $GCC_MCF_BIN_DIR"
