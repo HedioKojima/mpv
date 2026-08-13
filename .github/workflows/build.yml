@@ -68,7 +68,7 @@ jobs:
       # ---------------------------------------------------------------------
       # Additional tools
       #
-      # gcc-mcf already ships most of the build tools:
+      # gcc-mcf ships most of the build tools:
       #
       #   cmake
       #   meson
@@ -80,7 +80,7 @@ jobs:
       #   python
       #   yasm
       #
-      # GitHub runner still needs:
+      # The GitHub runner still needs:
       #
       #   nasm
       #   ccache
@@ -92,7 +92,6 @@ jobs:
           choco install --no-progress -y nasm ccache 7zip
 
           # Chocolatey does not refresh PATH in the current process.
-          # Add the relevant directories through GITHUB_PATH.
           echo "C:\\Program Files\\7-Zip" >> "$GITHUB_PATH"
           echo "C:\\ProgramData\\chocolatey\\bin" >> "$GITHUB_PATH"
 
@@ -182,9 +181,6 @@ jobs:
 
           # -----------------------------------------------------------------
           # Sort by the YYYYMMDD component and select the newest build.
-          #
-          # YYYYMMDD is numerically sortable, so this does not depend on the
-          # GCC version string.
           # -----------------------------------------------------------------
 
           GCC_MCF_FILE=$(
@@ -246,11 +242,12 @@ jobs:
             -y
 
           # -----------------------------------------------------------------
-          # Find compiler directory.
+          # Find compiler/bin directory.
           # -----------------------------------------------------------------
 
           GCC_MCF_BIN=$(
             find /c/gcc-mcf \
+              -type f \
               -name "${TARGET}-gcc.exe" \
               -exec dirname {} \; |
             head -n 1
@@ -258,8 +255,11 @@ jobs:
 
           if [ -z "$GCC_MCF_BIN" ]; then
             echo "Error: could not find ${TARGET}-gcc.exe" >&2
-            echo "Available executables:" >&2
-            find /c/gcc-mcf -name "*.exe" | head -50 >&2
+            echo "Available GCC executables:" >&2
+            find /c/gcc-mcf \
+              -type f \
+              -name "*-gcc.exe" |
+            head -50 >&2
             exit 1
           fi
 
@@ -267,43 +267,34 @@ jobs:
 
           echo "$GCC_MCF_BIN_WIN" >> "$GITHUB_PATH"
 
-          echo "gcc-mcf compiler directory:"
+          echo "gcc-mcf compiler/bin directory:"
           echo "$GCC_MCF_BIN"
 
           # -----------------------------------------------------------------
-          # Find prefixed binutils.
+          # gcc-mcf puts all target-prefixed binutils in this same directory:
           #
-          # gcc-mcf uses a separate:
+          #   ${TARGET}-ar.exe
+          #   ${TARGET}-nm.exe
+          #   ${TARGET}-ranlib.exe
+          #   ${TARGET}-strip.exe
+          #   ${TARGET}-windres.exe
+          #   ${TARGET}-dlltool.exe
           #
-          #   x86_64-w64-mingw32/bin/
+          # There is NO separate:
           #
-          # containing:
+          #   ${TARGET}/bin
           #
-          #   ar
-          #   nm
-          #   ranlib
-          #   strip
-          #   windres
-          #   dlltool
-          #   ...
+          # directory in this gcc-mcf package layout.
           # -----------------------------------------------------------------
 
-          GCC_MCF_TOOLBIN=$(
-            find /c/gcc-mcf \
-              -path "*/${TARGET}/bin" \
-              -type d |
-            head -n 1
-          )
-
-          if [ -z "$GCC_MCF_TOOLBIN" ]; then
-            echo "Error: could not find gcc-mcf target binutils directory" >&2
-            exit 1
-          fi
-
-          echo "$(cygpath -w "$GCC_MCF_TOOLBIN")" >> "$GITHUB_PATH"
-
-          echo "gcc-mcf binutils directory:"
-          echo "$GCC_MCF_TOOLBIN"
+          test -f "$GCC_MCF_BIN/${TARGET}-gcc.exe"
+          test -f "$GCC_MCF_BIN/${TARGET}-g++.exe"
+          test -f "$GCC_MCF_BIN/${TARGET}-ar.exe"
+          test -f "$GCC_MCF_BIN/${TARGET}-nm.exe"
+          test -f "$GCC_MCF_BIN/${TARGET}-ranlib.exe"
+          test -f "$GCC_MCF_BIN/${TARGET}-strip.exe"
+          test -f "$GCC_MCF_BIN/${TARGET}-windres.exe"
+          test -f "$GCC_MCF_BIN/${TARGET}-dlltool.exe"
 
           # -----------------------------------------------------------------
           # gcc-mcf provides mingw32-make.exe.
@@ -321,20 +312,6 @@ jobs:
             exit 1
           fi
 
-          # -----------------------------------------------------------------
-          # Verify required toolchain files before continuing.
-          # -----------------------------------------------------------------
-
-          test -f "$GCC_MCF_BIN/${TARGET}-gcc.exe"
-          test -f "$GCC_MCF_BIN/${TARGET}-g++.exe"
-
-          test -f "$GCC_MCF_TOOLBIN/ar.exe"
-          test -f "$GCC_MCF_TOOLBIN/nm.exe"
-          test -f "$GCC_MCF_TOOLBIN/ranlib.exe"
-          test -f "$GCC_MCF_TOOLBIN/strip.exe"
-          test -f "$GCC_MCF_TOOLBIN/windres.exe"
-          test -f "$GCC_MCF_TOOLBIN/dlltool.exe"
-
           echo
           echo "================ gcc-mcf ================"
 
@@ -348,7 +325,9 @@ jobs:
           echo
           echo "================ bundled tools ================"
 
-          "$GCC_MCF_BIN/cmake.exe" --version | head -1
+          if [ -f "$GCC_MCF_BIN/cmake.exe" ]; then
+            "$GCC_MCF_BIN/cmake.exe" --version | head -1
+          fi
 
           if [ -f "$GCC_MCF_BIN/meson.exe" ]; then
             "$GCC_MCF_BIN/meson.exe" --version
@@ -356,11 +335,13 @@ jobs:
             "$GCC_MCF_BIN/meson" --version
           fi
 
-          "$GCC_MCF_BIN/ninja.exe" --version
+          if [ -f "$GCC_MCF_BIN/ninja.exe" ]; then
+            "$GCC_MCF_BIN/ninja.exe" --version
+          fi
 
           if [ -f "$GCC_MCF_BIN/pkg-config.exe" ]; then
             "$GCC_MCF_BIN/pkg-config.exe" --version
-          else
+          elif [ -f "$GCC_MCF_BIN/pkgconf.exe" ]; then
             "$GCC_MCF_BIN/pkgconf.exe" --version
           fi
 
@@ -374,15 +355,9 @@ jobs:
 
           GCC_BIN="$(dirname "$(command -v "${TARGET}-gcc")")"
 
-          # Ensure both compiler and target-prefixed binutils directories
-          # are at the front of PATH.
-          TOOLBIN="$(dirname "$GCC_BIN")/${TARGET}/bin"
-
-          if [ -d "$TOOLBIN" ]; then
-            export PATH="$GCC_BIN:$TOOLBIN:$PATH"
-          else
-            export PATH="$GCC_BIN:$PATH"
-          fi
+          # gcc-mcf puts gcc/g++, windres, ar, nm, ranlib, strip and
+          # dlltool in the same ucrt64/bin directory.
+          export PATH="$GCC_BIN:$PATH"
 
           echo "Compiler:"
           command -v "${TARGET}-gcc"
@@ -390,8 +365,13 @@ jobs:
           echo "C++ compiler:"
           command -v "${TARGET}-g++"
 
-          echo "Assembler:"
+          echo "Assembler driver:"
           command -v "${TARGET}-gcc"
+
+          echo "GCC assembler:"
+          AS_PATH=$("${TARGET}-gcc" -print-prog-name=as)
+          echo "$AS_PATH"
+          test -f "$AS_PATH"
 
           echo "windres:"
           command -v "${TARGET}-windres"
@@ -428,16 +408,16 @@ jobs:
           echo "$GCC_CONFIG"
 
           if ! printf '%s\n' "$GCC_CONFIG" |
-              grep -qiE 'Thread model:.*mcf'; then
+              grep -qiE 'Thread model:.*mcf'
+          then
             echo "Error: gcc is not using the MCF thread model" >&2
             exit 1
           fi
 
           echo "MCF thread model detected."
 
-          # -----------------------------------------------------------------
-          # Verify the runtime DLLs supplied by gcc-mcf.
-          # -----------------------------------------------------------------
+          echo
+          echo "================ runtime DLLs ================"
 
           RUNTIME_DIR="$(dirname "$(command -v "${TARGET}-gcc")")"
 
@@ -445,38 +425,35 @@ jobs:
           test -f "$RUNTIME_DIR/libstdc++-6.dll"
           test -f "$RUNTIME_DIR/libmcfgthread-2.dll"
 
-          echo
-          echo "================ runtime DLLs ================"
-
           ls -lh \
             "$RUNTIME_DIR/libgcc_s_seh-1.dll" \
             "$RUNTIME_DIR/libstdc++-6.dll" \
             "$RUNTIME_DIR/libmcfgthread-2.dll"
 
-          # -----------------------------------------------------------------
-          # Smoke test.
-          #
-          # This verifies:
-          #
-          #   compiler
-          #   cc1
-          #   collect2
-          #   GNU ld
-          #   UCRT
-          #   mingw-w64 CRT
-          #   mcfgthread
-          #
-          # by compiling and executing a native Windows executable.
-          # -----------------------------------------------------------------
+          echo
+          echo "================ GCC internal tools ================"
 
-          printf '
+          LD_PATH=$("${TARGET}-gcc" -print-prog-name=ld)
+          CC1_PATH=$("${TARGET}-gcc" -print-prog-name=cc1)
+
+          echo "LD  = $LD_PATH"
+          echo "CC1 = $CC1_PATH"
+
+          test -f "$LD_PATH"
+          test -f "$CC1_PATH"
+
+          echo
+          echo "================ smoke test ================"
+
+          cat > /tmp/mcf_test.c <<'EOF'
           #include <stdio.h>
+
           int main(void)
           {
               puts("gcc-mcf smoke test passed");
               return 0;
           }
-          ' > /tmp/mcf_test.c
+          EOF
 
           "${TARGET}-gcc" \
             /tmp/mcf_test.c \
