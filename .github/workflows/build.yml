@@ -1,24 +1,21 @@
 name: build-mingw64
-
 on:
   workflow_dispatch:
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   mingw64:
-    runs-on: ubuntu-24.04
-
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     env:
       TARGET: x86_64-w64-mingw32
-
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 500M
       DOWNLOAD_CACHE: ${{ github.workspace }}/.ccache/downloads
-
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -38,66 +35,60 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-
-          sudo apt-get install --no-install-recommends -y \
-            ccache \
-            curl \
-            git \
-            python3-pip \
-            nasm \
-            ninja-build \
-            pkgconf \
-            wine64 \
-            wine
-
-          python -m pip install meson
-
-      - name: Install llvm-mingw
-        run: |
-          LLVM_MINGW_ARCHIVE="llvm-mingw-latest-ucrt-linux-x86_64.tar.xz"
-          LLVM_MINGW_URL="https://github.com/eko5624/toolchain/releases/download/toolchain/${LLVM_MINGW_ARCHIVE}"
-
-          echo "Downloading:"
-          echo "$LLVM_MINGW_URL"
-
+          # Native Windows tools via choco
+          choco install --no-progress -y nasm ccache 7zip make
+          # meson + ninja via pip (Python is preinstalled on windows-latest)
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja
+          # pkg-config-lite (standalone Windows build)
+          PKGCFG_ZIP="pkg-config-lite-0.28-1_bin-win32.zip"
           curl -fL --retry 3 \
-            "$LLVM_MINGW_URL" \
-            -o "$LLVM_MINGW_ARCHIVE"
+            "https://downloads.sourceforge.net/project/pkgconfiglite/0.28-1/${PKGCFG_ZIP}?download" \
+            -o "$PKGCFG_ZIP"
+          mkdir -p /c/tools/pkg-config
+          7z x "$PKGCFG_ZIP" -o/c/tools/pkg-config -y > /dev/null
+          echo "C:\\tools\\pkg-config\\bin" >> "$GITHUB_PATH"
 
-          sudo mkdir -p /opt/llvm-mingw
-
-          sudo tar -xJf "$LLVM_MINGW_ARCHIVE" \
-            --strip-components=1 \
-            -C /opt/llvm-mingw
-
-          echo "/opt/llvm-mingw/bin" >> "$GITHUB_PATH"
-
-          echo "llvm-mingw:"
-          /opt/llvm-mingw/bin/${TARGET}-clang --version
-
-          echo "Toolchain:"
-          ls -l /opt/llvm-mingw/bin/${TARGET}-clang
-          ls -l /opt/llvm-mingw/bin/${TARGET}-clang++
-          ls -l /opt/llvm-mingw/bin/${TARGET}-windres
-          ls -l /opt/llvm-mingw/bin/${TARGET}-ar
-          ls -l /opt/llvm-mingw/bin/${TARGET}-strip
+      - name: Install gcc-mcf toolchain
+        run: |
+          # Dynamically fetch the latest x64-ucrt archive name (files are rotated)
+          GCC_MCF_FILE=$(curl -s https://gcc-mcf.lhmouse.com/ | \
+            grep -oP 'mingw-w64-gcc-mcf_[0-9]+_[0-9.]+_x64-ucrt_[a-f0-9]+\.7z' | \
+            sort -r | head -n 1)
+          if [ -z "$GCC_MCF_FILE" ]; then
+            echo "Error: could not find latest gcc-mcf x64-ucrt archive" >&2
+            exit 1
+          fi
+          GCC_MCF_URL="https://gcc-mcf.lhmouse.com/$GCC_MCF_FILE"
+          echo "Downloading: $GCC_MCF_URL"
+          curl -fL --retry 3 "$GCC_MCF_URL" -o "$GCC_MCF_FILE"
+          echo "Extracting..."
+          mkdir -p /c/gcc-mcf
+          7z x "$GCC_MCF_FILE" -o/c/gcc-mcf -y > /dev/null
+          # Locate the bin/ dir that holds the cross-compiler executables
+          GCC_MCF_BIN=$(find /c/gcc-mcf -name "${TARGET}-gcc.exe" -printf '%h' | head -n 1)
+          if [ -z "$GCC_MCF_BIN" ]; then
+            echo "Error: could not find ${TARGET}-gcc.exe after extraction" >&2
+            exit 1
+          fi
+          GCC_MCF_BIN_WIN=$(cygpath -w "$GCC_MCF_BIN")
+          echo "$GCC_MCF_BIN_WIN" >> "$GITHUB_PATH"
+          echo "gcc-mcf installed at: $GCC_MCF_BIN"
+          "$GCC_MCF_BIN/${TARGET}-gcc.exe" --version
 
       - name: Verify toolchain
         run: |
           set -eux
-
-          command -v "${TARGET}-clang"
-          command -v "${TARGET}-clang++"
+          command -v "${TARGET}-gcc"
+          command -v "${TARGET}-g++"
           command -v "${TARGET}-windres"
           command -v "${TARGET}-ar"
           command -v "${TARGET}-nm"
           command -v "${TARGET}-ranlib"
           command -v "${TARGET}-strip"
           command -v "${TARGET}-dlltool"
-
-          "${TARGET}-clang" --version
-          "${TARGET}-clang++" --version
+          "${TARGET}-gcc" --version
+          "${TARGET}-g++" --version
           "${TARGET}-windres" --version || true
 
       - name: Build libraries
@@ -117,16 +108,13 @@ jobs:
       - name: Functional test
         run: |
           cd artifact
-          wine ./mpv.com -v --no-config
-        env:
-          WINEDEBUG: '+loaddll'
+          ./mpv.com -v --no-config
 
       - name: Get artifact name
         id: artifact
         run: |
           VERSION_FILE=$(find . -path "*/common/version.h" -type f | head -n 1)
           VER=$(grep VERSION "$VERSION_FILE" | cut -d'"' -f2)
-
           echo "name=mpv-$VER-${{ github.run_id }}-$TARGET" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
