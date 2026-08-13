@@ -40,13 +40,8 @@ export CFLAGS="-O3 -pipe -Wall -Wno-error=switch -march=x86-64-v3"
 export CXXFLAGS="-O3 -pipe -Wall -Wno-error=switch -march=x86-64-v3"
 export LDFLAGS="-fstack-protector-strong -fuse-ld=lld"
 
-# Options merged from ci/build-common.sh
+# Merged from ci/build-common.sh
 export CFLAGS="$CFLAGS -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3"
-
-common_args="--werror \
--Dlibmpv=false \
--Dtests=false \
-"
 
 # Anything that uses pkg-config
 export PKG_CONFIG_SYSROOT_DIR="$prefix_dir"
@@ -518,7 +513,10 @@ rm -rf "$build"
 
 mpv_args=(
     --cross-file "$prefix_dir/crossfile"
-    $common_args
+    # Merged from ci/build-common.sh
+    --werror
+    -Dlibmpv=false
+    -Dtests=false
     --buildtype release
     -Dlua=luajit
     -D{shaderc,spirv-cross,d3d11,libcurl}=enabled
