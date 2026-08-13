@@ -20,6 +20,11 @@ jobs:
       # runner), fail loudly instead of silently copying — the prefix_dir
       # usr/local symlink trick relies on symlink semantics.
       MSYS: winsymlinks:nativestrict
+      # Fallback IP for gcc-mcf.lhmouse.com (verified via multiple public
+      # DoH resolvers). GitHub runner DNS repeatedly fails for this host
+      # ("Could not resolve host"), so curl falls back to this IP via
+      # --resolve, which bypasses DNS entirely.
+      MCF_PINNED_IP: 204.152.213.15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -54,10 +59,21 @@ jobs:
 
           # Fetch directory listing and extract latest x64-ucrt archive name.
           # Use -E (extended regex) instead of -P; Git Bash grep may lack PCRE.
-          # Retry: gcc-mcf.lhmouse.com has intermittent DNS/availability issues.
+          # GitHub runners repeatedly fail to resolve this host via normal DNS
+          # ("Could not resolve host"), so fall back to the pinned IP with
+          # --resolve. Normal DNS is tried first: if the site ever moves to a
+          # new IP, or the runner's DNS gets fixed, the normal path wins and
+          # the pinned IP is only a safety net.
           LISTING=""
-          for attempt in 1 2 3 4 5; do
-            LISTING=$(curl -fsSL --retry 3 --retry-delay 5 https://gcc-mcf.lhmouse.com/) && break
+          for attempt in 1 2 3; do
+            if LISTING=$(curl -fsSL --retry 2 --retry-delay 5 https://gcc-mcf.lhmouse.com/); then
+              break
+            fi
+            if LISTING=$(curl -fsSL --retry 2 --retry-delay 5 \
+                --resolve "gcc-mcf.lhmouse.com:443:${MCF_PINNED_IP}" \
+                https://gcc-mcf.lhmouse.com/); then
+              break
+            fi
             echo "Attempt $attempt failed; retrying in 10s..."
             sleep 10
           done
@@ -77,7 +93,10 @@ jobs:
           fi
           GCC_MCF_URL="https://gcc-mcf.lhmouse.com/$GCC_MCF_FILE"
           echo "Downloading: $GCC_MCF_URL"
-          curl -fL --retry 3 "$GCC_MCF_URL" -o "$GCC_MCF_FILE"
+          curl -fL --retry 3 "$GCC_MCF_URL" -o "$GCC_MCF_FILE" \
+            || curl -fL --retry 3 \
+                --resolve "gcc-mcf.lhmouse.com:443:${MCF_PINNED_IP}" \
+                "$GCC_MCF_URL" -o "$GCC_MCF_FILE"
           ls -lh "$GCC_MCF_FILE"
 
           echo "Extracting..."
