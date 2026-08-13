@@ -33,27 +33,29 @@ jobs:
           restore-keys: |
             ${{ env.TARGET }}-
 
-      - name: Install build dependencies
+      - name: Install minimal extra tools
         run: |
-          # Native Windows tools via choco
-          choco install --no-progress -y nasm ccache 7zip make
-          # meson + ninja via pip (Python is preinstalled on windows-latest)
-          python -m pip install --upgrade pip
-          python -m pip install meson ninja
-          # pkg-config-lite (standalone Windows build)
-          PKGCFG_ZIP="pkg-config-lite-0.28-1_bin-win32.zip"
-          curl -fL --retry 3 \
-            "https://downloads.sourceforge.net/project/pkgconfiglite/0.28-1/${PKGCFG_ZIP}?download" \
-            -o "$PKGCFG_ZIP"
-          mkdir -p /c/tools/pkg-config
-          7z x "$PKGCFG_ZIP" -o/c/tools/pkg-config -y > /dev/null
-          echo "C:\\tools\\pkg-config\\bin" >> "$GITHUB_PATH"
+          # gcc-mcf ships with cmake/meson/ninja/pkgconf/make/wget/curl/python/yasm;
+          # only nasm and ccache are missing, plus 7zip for extracting the .7z.
+          choco install --no-progress -y nasm ccache 7zip
+          # choco may not refresh PATH for the current shell; add 7-Zip explicitly.
+          echo "C:\\Program Files\\7-Zip" >> "$GITHUB_PATH"
 
       - name: Install gcc-mcf toolchain
         run: |
-          # Dynamically fetch the latest x64-ucrt archive name (files are rotated)
-          GCC_MCF_FILE=$(curl -s https://gcc-mcf.lhmouse.com/ | \
-            grep -oP 'mingw-w64-gcc-mcf_[0-9]+_[0-9.]+_x64-ucrt_[a-f0-9]+\.7z' | \
+          set -x
+          # Ensure 7-Zip is findable in this step too
+          export PATH="/c/Program Files/7-Zip:$PATH"
+          command -v 7z || { echo "7z not found"; exit 1; }
+
+          # Fetch directory listing and extract latest x64-ucrt archive name.
+          # Use -E (extended regex) instead of -P; Git Bash grep may lack PCRE.
+          LISTING=$(curl -fsSL https://gcc-mcf.lhmouse.com/)
+          echo "Directory listing (first 30 lines):"
+          echo "$LISTING" | head -30
+
+          GCC_MCF_FILE=$(echo "$LISTING" | \
+            grep -oE 'mingw-w64-gcc-mcf_[0-9]+_[0-9.]+_x64-ucrt_[a-f0-9]+\.7z' | \
             sort -r | head -n 1)
           if [ -z "$GCC_MCF_FILE" ]; then
             echo "Error: could not find latest gcc-mcf x64-ucrt archive" >&2
@@ -62,19 +64,32 @@ jobs:
           GCC_MCF_URL="https://gcc-mcf.lhmouse.com/$GCC_MCF_FILE"
           echo "Downloading: $GCC_MCF_URL"
           curl -fL --retry 3 "$GCC_MCF_URL" -o "$GCC_MCF_FILE"
+          ls -lh "$GCC_MCF_FILE"
+
           echo "Extracting..."
           mkdir -p /c/gcc-mcf
-          7z x "$GCC_MCF_FILE" -o/c/gcc-mcf -y > /dev/null
-          # Locate the bin/ dir that holds the cross-compiler executables
-          GCC_MCF_BIN=$(find /c/gcc-mcf -name "${TARGET}-gcc.exe" -printf '%h' | head -n 1)
+          7z x "$GCC_MCF_FILE" -o/c/gcc-mcf -y
+
+          echo "Extracted top-level structure:"
+          find /c/gcc-mcf -maxdepth 2 -type d
+
+          # Locate bin/ — use -exec dirname instead of -printf for compatibility
+          GCC_MCF_BIN=$(find /c/gcc-mcf -name "${TARGET}-gcc.exe" -exec dirname {} \; | head -n 1)
           if [ -z "$GCC_MCF_BIN" ]; then
             echo "Error: could not find ${TARGET}-gcc.exe after extraction" >&2
+            echo "All .exe files found:" >&2
+            find /c/gcc-mcf -name "*.exe" | head -20 >&2
             exit 1
           fi
           GCC_MCF_BIN_WIN=$(cygpath -w "$GCC_MCF_BIN")
           echo "$GCC_MCF_BIN_WIN" >> "$GITHUB_PATH"
           echo "gcc-mcf installed at: $GCC_MCF_BIN"
           "$GCC_MCF_BIN/${TARGET}-gcc.exe" --version
+          echo "--- bundled tools ---"
+          "$GCC_MCF_BIN/cmake.exe" --version | head -1
+          "$GCC_MCF_BIN/meson.exe" --version || "$GCC_MCF_BIN/meson" --version
+          "$GCC_MCF_BIN/ninja.exe" --version
+          "$GCC_MCF_BIN/pkg-config.exe" --version || "$GCC_MCF_BIN/pkgconf.exe" --version
 
       - name: Verify toolchain
         run: |
