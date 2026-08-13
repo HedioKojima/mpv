@@ -35,11 +35,18 @@ export WINDRES="$TARGET-windres"
 export DLLTOOL="$TARGET-dlltool"
 
 # Optimization
-export CFLAGS="-O3 -pipe -Wall -Wno-error=switch"
-export CXXFLAGS="-O3 -pipe -Wall -Wno-error=switch"
+# CPU baseline: x86-64-v3 (enables AVX2 and related instruction sets)
+export CFLAGS="-O3 -pipe -Wall -Wno-error=switch -march=x86-64-v3"
+export CXXFLAGS="-O3 -pipe -Wall -Wno-error=switch -march=x86-64-v3"
 export LDFLAGS="-fstack-protector-strong -fuse-ld=lld"
 
-. ./ci/build-common.sh
+# Options merged from ci/build-common.sh
+export CFLAGS="$CFLAGS -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3"
+
+common_args="--werror \
+-Dlibmpv=false \
+-Dtests=false \
+"
 
 # Anything that uses pkg-config
 export PKG_CONFIG_SYSROOT_DIR="$prefix_dir"
