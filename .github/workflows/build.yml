@@ -1,30 +1,39 @@
 name: build-mingw64
+
 on:
   workflow_dispatch:
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
 jobs:
   mingw64:
     runs-on: windows-latest
+
     defaults:
       run:
         shell: bash
+
     env:
       TARGET: x86_64-w64-mingw32
+
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 500M
       DOWNLOAD_CACHE: ${{ github.workspace }}/.ccache/downloads
+
       # Git Bash: create real symlinks (Developer Mode is enabled on the
       # runner), fail loudly instead of silently copying — the prefix_dir
       # usr/local symlink trick relies on symlink semantics.
       MSYS: winsymlinks:nativestrict
+
       # Fallback IP for gcc-mcf.lhmouse.com (verified via multiple public
       # DoH resolvers). GitHub runner DNS repeatedly fails for this host
       # ("Could not resolve host"), so curl falls back to this IP via
       # --resolve, which bypasses DNS entirely.
       MCF_PINNED_IP: 204.152.213.15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -38,17 +47,20 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ env.TARGET }}-${{ steps.get_time.outputs.timestamp }}
+          key: mcf-${{ env.TARGET }}-${{ steps.get_time.outputs.timestamp }}
           restore-keys: |
-            ${{ env.TARGET }}-
+            mcf-${{ env.TARGET }}-
 
       - name: Install minimal extra tools
         run: |
           # gcc-mcf ships with cmake/meson/ninja/pkgconf/make/wget/curl/python/yasm;
           # only nasm and ccache are missing, plus 7zip for extracting the .7z.
           choco install --no-progress -y nasm ccache 7zip
-          # choco may not refresh PATH for the current shell; add 7-Zip explicitly.
+
+          # choco does not refresh PATH for later steps; add 7-Zip and the
+          # chocolatey shims (nasm, ccache) explicitly.
           echo "C:\\Program Files\\7-Zip" >> "$GITHUB_PATH"
+          echo "C:\\ProgramData\\chocolatey\\bin" >> "$GITHUB_PATH"
 
       - name: Install gcc-mcf toolchain
         run: |
@@ -103,9 +115,6 @@ jobs:
           mkdir -p /c/gcc-mcf
           7z x "$GCC_MCF_FILE" -o/c/gcc-mcf -y
 
-          echo "Extracted top-level structure:"
-          find /c/gcc-mcf -maxdepth 2 -type d
-
           # Locate bin/ — use -exec dirname instead of -printf for compatibility
           GCC_MCF_BIN=$(find /c/gcc-mcf -name "${TARGET}-gcc.exe" -exec dirname {} \; | head -n 1)
           if [ -z "$GCC_MCF_BIN" ]; then
@@ -119,7 +128,7 @@ jobs:
           echo "gcc-mcf installed at: $GCC_MCF_BIN"
 
           # The prefixed binutils (x86_64-w64-mingw32-ar/-windres/-dlltool/...)
-          # live in a separate bin/ dir that is not on PATH yet; add it too.
+          # live in a separate bin/ dir; add it to PATH as well.
           GCC_MCF_TOOLBIN=$(find /c/gcc-mcf -path "*/x86_64-w64-mingw32/bin" -type d | head -n 1)
           if [ -z "$GCC_MCF_TOOLBIN" ]; then
             echo "Error: could not find toolchain binutils directory" >&2
@@ -127,6 +136,15 @@ jobs:
           fi
           echo "$(cygpath -w "$GCC_MCF_TOOLBIN")" >> "$GITHUB_PATH"
           echo "binutils at: $GCC_MCF_TOOLBIN"
+
+          # The toolchain only ships mingw32-make.exe; provide a plain
+          # "make" for autotools (libiconv) and the LuaJIT build.
+          cp -v "$GCC_MCF_BIN/mingw32-make.exe" "$GCC_MCF_BIN/make.exe"
+
+          # Sanity: the prefixed binutils must really be present.
+          ls -l "$GCC_MCF_TOOLBIN/windres.exe" "$GCC_MCF_TOOLBIN/ar.exe"
+
+          echo "gcc-mcf:"
           "$GCC_MCF_BIN/${TARGET}-gcc.exe" --version
           echo "--- bundled tools ---"
           "$GCC_MCF_BIN/cmake.exe" --version | head -1
@@ -137,6 +155,12 @@ jobs:
       - name: Verify toolchain
         run: |
           set -eux
+
+          # Make sure the toolchain's own bin dirs are on PATH, regardless of
+          # how the runner environment delivered them.
+          GCC_BIN="$(dirname "$(command -v "${TARGET}-gcc")")"
+          export PATH="$GCC_BIN:$(dirname "$GCC_BIN")/${TARGET}/bin:$PATH"
+
           command -v "${TARGET}-gcc"
           command -v "${TARGET}-g++"
           command -v "${TARGET}-windres"
@@ -145,9 +169,17 @@ jobs:
           command -v "${TARGET}-ranlib"
           command -v "${TARGET}-strip"
           command -v "${TARGET}-dlltool"
+          command -v make
+
           "${TARGET}-gcc" --version
           "${TARGET}-g++" --version
           "${TARGET}-windres" --version || true
+
+          # Smoke test: compile and run a trivial Windows program with the
+          # full toolchain (cc1, collect2, ld, UCRT CRT, mcfgthread).
+          printf 'int main(void){return 0;}\n' > /tmp/mcf_test.c
+          "${TARGET}-gcc" /tmp/mcf_test.c -o /tmp/mcf_test.exe
+          /tmp/mcf_test.exe
 
       - name: Build libraries
         run: |
@@ -173,6 +205,7 @@ jobs:
         run: |
           VERSION_FILE=$(find . -path "*/common/version.h" -type f | head -n 1)
           VER=$(grep VERSION "$VERSION_FILE" | cut -d'"' -f2)
+
           echo "name=mpv-$VER-${{ github.run_id }}-$TARGET" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
@@ -186,4 +219,4 @@ jobs:
         if: always()
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ env.TARGET }}-${{ steps.get_time.outputs.timestamp }}
+          key: mcf-${{ env.TARGET }}-${{ steps.get_time.outputs.timestamp }}
