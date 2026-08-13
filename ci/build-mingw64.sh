@@ -3,8 +3,8 @@ prefix_dir=$PWD/mingw_prefix
 mkdir -p "$prefix_dir"
 ln -snf . "$prefix_dir/usr"
 ln -snf . "$prefix_dir/local"
-# Windows Git Bash has curl but not wget; use curl as fetcher
-fetch="curl -fL --retry 3 --progress-bar"
+# gcc-mcf bundles wget, so we can use it directly.
+wget="wget --progress=bar:force"
 gitclone="git clone --depth=1 --recursive --shallow-submodules"
 if [[ -z "$TARGET" ]]; then
     echo "Error: must set TARGET" >&2
@@ -18,7 +18,7 @@ if ! command -v pkg-config >/dev/null; then
     echo "Error: missing pkg-config" >&2
     exit 1
 fi
-# gcc-mcf (GCC + mcfgthread)
+# gcc-mcf (GCC 16 + mcfgthread, UCRT)
 export CC="$TARGET-gcc"
 export AS="$TARGET-gcc"
 export CXX="$TARGET-g++"
@@ -36,9 +36,13 @@ export CXXFLAGS="-O3 -pipe -Wall -Wno-error=switch -march=x86-64-v3"
 export LDFLAGS="-fstack-protector-strong"
 # Merged from ci/build-common.sh
 export CFLAGS="$CFLAGS -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3"
-# Anything that uses pkg-config
+# Anything that uses pkg-config — force it to look only in our prefix,
+# NOT in the gcc-mcf toolchain's own lib/pkgconfig (which ships zlib-ng,
+# curl, iconv, etc. that would shadow our source-built copies).
 export PKG_CONFIG_SYSROOT_DIR="$prefix_dir"
 export PKG_CONFIG_LIBDIR="$PKG_CONFIG_SYSROOT_DIR/lib/pkgconfig"
+export PKG_CONFIG_IGNORE_SYSTEM_CFLAGS=1
+export PKG_CONFIG_IGNORE_SYSTEM_LIBS=1
 # autotools(-like)
 at_flags="--disable-static --enable-shared"
 # meson
@@ -117,7 +121,7 @@ function gettar {
         cp -v "$DOWNLOAD_CACHE/$cachename" "$fname"
         cachename=
     else
-        $fetch "$1" -o "$fname" || return 1
+        $wget "$1" -O "$fname" || return 1
     fi
     tar -xaf "$fname" || return 1
     if [ ! -d "$dname" ]; then
@@ -312,7 +316,7 @@ _libass () {
     makeplusinstall
     popd
 }
-_libass_mark=lib/liblibass.dll.a
+_libass_mark=lib/libass.dll.a
 _luajit () {
     [ -d LuaJIT ] || \
         $gitclone https://github.com/LuaJIT/LuaJIT.git
@@ -393,29 +397,18 @@ if [ "$2" = pack ]; then
     for file in "$prefix_dir/bin/"*.dll; do
         cp -p "$file" artifact/tmp/
     done
-    # gcc-mcf runtime DLLs — locate the toolchain bin dir dynamically.
+    # gcc-mcf runtime DLLs — in MSYS2-style toolchains they live in the
+    # same bin/ directory as the compiler executables.
     GCC_MCF_BIN_DIR=$(dirname "$(command -v ${TARGET}-gcc)")
-    GCC_MCF_ROOT=$(dirname "$GCC_MCF_BIN_DIR")
-    RUNTIME_DLL_DIR=""
-    for d in "$GCC_MCF_BIN_DIR" "$GCC_MCF_ROOT/$TARGET/bin" "$GCC_MCF_ROOT/$TARGET/lib"; do
-        if [ -f "$d/libgcc_s_seh-1.dll" ]; then
-            RUNTIME_DLL_DIR="$d"
-            break
-        fi
+    echo "Runtime DLL dir: $GCC_MCF_BIN_DIR"
+    for file in \
+        "$GCC_MCF_BIN_DIR/libgcc_s_seh-1.dll" \
+        "$GCC_MCF_BIN_DIR/libstdc++-6.dll" \
+        "$GCC_MCF_BIN_DIR/libmcfgthread-1.dll" \
+        "$GCC_MCF_BIN_DIR/libssp-0.dll"
+    do
+        [ -f "$file" ] && cp -p "$file" artifact/tmp/
     done
-    if [ -z "$RUNTIME_DLL_DIR" ]; then
-        echo "Warning: could not locate gcc-mcf runtime DLL directory" >&2
-    else
-        echo "Runtime DLL dir: $RUNTIME_DLL_DIR"
-        for file in \
-            "$RUNTIME_DLL_DIR/libgcc_s_seh-1.dll" \
-            "$RUNTIME_DLL_DIR/libstdc++-6.dll" \
-            "$RUNTIME_DLL_DIR/libmcfgthread-1.dll" \
-            "$RUNTIME_DLL_DIR/libssp-0.dll"
-        do
-            [ -f "$file" ] && cp -p "$file" artifact/tmp/
-        done
-    fi
     echo "Selecting DLLs:"
     pushd artifact/tmp
     dlls=(
