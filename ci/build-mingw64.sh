@@ -404,7 +404,7 @@ if [ "$2" = pack ]; then
     for file in \
         "$GCC_MCF_BIN_DIR/libgcc_s_seh-1.dll" \
         "$GCC_MCF_BIN_DIR/libstdc++-6.dll" \
-        "$GCC_MCF_BIN_DIR/libmcfgthread-1.dll" \
+        "$GCC_MCF_BIN_DIR/libmcfgthread-2.dll" \
         "$GCC_MCF_BIN_DIR/libssp-0.dll"
     do
         [ -f "$file" ] && cp -p "$file" artifact/tmp/
@@ -415,7 +415,7 @@ if [ "$2" = pack ]; then
         # gcc-mcf runtime
         libgcc_s_seh-1.dll
         libstdc++-6.dll
-        libmcfgthread-1.dll
+        libmcfgthread-2.dll
         libssp-0.dll
         # FFmpeg
         av*.dll

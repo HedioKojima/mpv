@@ -16,6 +16,10 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 500M
       DOWNLOAD_CACHE: ${{ github.workspace }}/.ccache/downloads
+      # Git Bash: create real symlinks (Developer Mode is enabled on the
+      # runner), fail loudly instead of silently copying — the prefix_dir
+      # usr/local symlink trick relies on symlink semantics.
+      MSYS: winsymlinks:nativestrict
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -50,7 +54,17 @@ jobs:
 
           # Fetch directory listing and extract latest x64-ucrt archive name.
           # Use -E (extended regex) instead of -P; Git Bash grep may lack PCRE.
-          LISTING=$(curl -fsSL https://gcc-mcf.lhmouse.com/)
+          # Retry: gcc-mcf.lhmouse.com has intermittent DNS/availability issues.
+          LISTING=""
+          for attempt in 1 2 3 4 5; do
+            LISTING=$(curl -fsSL --retry 3 --retry-delay 5 https://gcc-mcf.lhmouse.com/) && break
+            echo "Attempt $attempt failed; retrying in 10s..."
+            sleep 10
+          done
+          if [ -z "$LISTING" ]; then
+            echo "Error: could not fetch directory listing" >&2
+            exit 1
+          fi
           echo "Directory listing (first 30 lines):"
           echo "$LISTING" | head -30
 
