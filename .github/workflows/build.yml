@@ -23,20 +23,34 @@ jobs:
       CCACHE_MAXSIZE: 500M
       DOWNLOAD_CACHE: ${{ github.workspace }}/.ccache/downloads
 
-      # Git Bash: create real symlinks (Developer Mode is enabled on the
-      # runner), fail loudly instead of silently copying — the prefix_dir
-      # usr/local symlink trick relies on symlink semantics.
+      # Git Bash:
+      # create real native symlinks instead of copying.
+      #
+      # The build script uses:
+      #   prefix_dir/usr -> .
+      #   prefix_dir/local -> .
+      #
+      # so real symlink semantics are required.
       MSYS: winsymlinks:nativestrict
 
-      # Fallback IP for gcc-mcf.lhmouse.com (verified via multiple public
-      # DoH resolvers). GitHub runner DNS repeatedly fails for this host
-      # ("Could not resolve host"), so curl falls back to this IP via
-      # --resolve, which bypasses DNS entirely.
+      # Fallback IP for gcc-mcf.lhmouse.com.
+      #
+      # GitHub-hosted runners may intermittently fail to resolve this host
+      # through normal DNS, so curl can use --resolve as a fallback.
       MCF_PINNED_IP: 204.152.213.15
 
     steps:
+
+      # ---------------------------------------------------------------------
+      # Checkout
+      # ---------------------------------------------------------------------
+
       - name: Checkout
         uses: actions/checkout@v7
+
+      # ---------------------------------------------------------------------
+      # ccache
+      # ---------------------------------------------------------------------
 
       - name: Get cache timestamp
         id: get_time
@@ -51,168 +65,497 @@ jobs:
           restore-keys: |
             mcf-${{ env.TARGET }}-
 
+      # ---------------------------------------------------------------------
+      # Additional tools
+      #
+      # gcc-mcf already ships most of the build tools:
+      #
+      #   cmake
+      #   meson
+      #   ninja
+      #   pkgconf/pkg-config
+      #   make/mingw32-make
+      #   wget
+      #   curl
+      #   python
+      #   yasm
+      #
+      # GitHub runner still needs:
+      #
+      #   nasm
+      #   ccache
+      #   7-Zip
+      # ---------------------------------------------------------------------
+
       - name: Install minimal extra tools
         run: |
-          # gcc-mcf ships with cmake/meson/ninja/pkgconf/make/wget/curl/python/yasm;
-          # only nasm and ccache are missing, plus 7zip for extracting the .7z.
           choco install --no-progress -y nasm ccache 7zip
 
-          # choco does not refresh PATH for later steps; add 7-Zip and the
-          # chocolatey shims (nasm, ccache) explicitly.
+          # Chocolatey does not refresh PATH in the current process.
+          # Add the relevant directories through GITHUB_PATH.
           echo "C:\\Program Files\\7-Zip" >> "$GITHUB_PATH"
           echo "C:\\ProgramData\\chocolatey\\bin" >> "$GITHUB_PATH"
 
-      - name: Install gcc-mcf toolchain
-        run: |
-          set -x
-          # Ensure 7-Zip is findable in this step too
-          export PATH="/c/Program Files/7-Zip:$PATH"
-          command -v 7z || { echo "7z not found"; exit 1; }
+      # ---------------------------------------------------------------------
+      # Install latest gcc-mcf
+      # ---------------------------------------------------------------------
 
-          # Fetch directory listing and extract latest x64-ucrt archive name.
-          # Use -E (extended regex) instead of -P; Git Bash grep may lack PCRE.
-          # GitHub runners repeatedly fail to resolve this host via normal DNS
-          # ("Could not resolve host"), so fall back to the pinned IP with
-          # --resolve. Normal DNS is tried first: if the site ever moves to a
-          # new IP, or the runner's DNS gets fixed, the normal path wins and
-          # the pinned IP is only a safety net.
-          LISTING=""
-          for attempt in 1 2 3; do
-            if LISTING=$(curl -fsSL --retry 2 --retry-delay 5 https://gcc-mcf.lhmouse.com/); then
-              break
-            fi
-            if LISTING=$(curl -fsSL --retry 2 --retry-delay 5 \
-                --resolve "gcc-mcf.lhmouse.com:443:${MCF_PINNED_IP}" \
-                https://gcc-mcf.lhmouse.com/); then
-              break
-            fi
-            echo "Attempt $attempt failed; retrying in 10s..."
-            sleep 10
-          done
-          if [ -z "$LISTING" ]; then
-            echo "Error: could not fetch directory listing" >&2
-            exit 1
-          fi
-          echo "Directory listing (first 30 lines):"
-          echo "$LISTING" | head -30
-
-          GCC_MCF_FILE=$(echo "$LISTING" | \
-            grep -oE 'mingw-w64-gcc-mcf_[0-9]+_[0-9.]+_x64-ucrt_[a-f0-9]+\.7z' | \
-            sort -r | head -n 1)
-          if [ -z "$GCC_MCF_FILE" ]; then
-            echo "Error: could not find latest gcc-mcf x64-ucrt archive" >&2
-            exit 1
-          fi
-          GCC_MCF_URL="https://gcc-mcf.lhmouse.com/$GCC_MCF_FILE"
-          echo "Downloading: $GCC_MCF_URL"
-          curl -fL --retry 3 "$GCC_MCF_URL" -o "$GCC_MCF_FILE" \
-            || curl -fL --retry 3 \
-                --resolve "gcc-mcf.lhmouse.com:443:${MCF_PINNED_IP}" \
-                "$GCC_MCF_URL" -o "$GCC_MCF_FILE"
-          ls -lh "$GCC_MCF_FILE"
-
-          echo "Extracting..."
-          mkdir -p /c/gcc-mcf
-          7z x "$GCC_MCF_FILE" -o/c/gcc-mcf -y
-
-          # Locate bin/ — use -exec dirname instead of -printf for compatibility
-          GCC_MCF_BIN=$(find /c/gcc-mcf -name "${TARGET}-gcc.exe" -exec dirname {} \; | head -n 1)
-          if [ -z "$GCC_MCF_BIN" ]; then
-            echo "Error: could not find ${TARGET}-gcc.exe after extraction" >&2
-            echo "All .exe files found:" >&2
-            find /c/gcc-mcf -name "*.exe" | head -20 >&2
-            exit 1
-          fi
-          GCC_MCF_BIN_WIN=$(cygpath -w "$GCC_MCF_BIN")
-          echo "$GCC_MCF_BIN_WIN" >> "$GITHUB_PATH"
-          echo "gcc-mcf installed at: $GCC_MCF_BIN"
-
-          # The prefixed binutils (x86_64-w64-mingw32-ar/-windres/-dlltool/...)
-          # live in a separate bin/ dir; add it to PATH as well.
-          GCC_MCF_TOOLBIN=$(find /c/gcc-mcf -path "*/x86_64-w64-mingw32/bin" -type d | head -n 1)
-          if [ -z "$GCC_MCF_TOOLBIN" ]; then
-            echo "Error: could not find toolchain binutils directory" >&2
-            exit 1
-          fi
-          echo "$(cygpath -w "$GCC_MCF_TOOLBIN")" >> "$GITHUB_PATH"
-          echo "binutils at: $GCC_MCF_TOOLBIN"
-
-          # The toolchain only ships mingw32-make.exe; provide a plain
-          # "make" for autotools (libiconv) and the LuaJIT build.
-          cp -v "$GCC_MCF_BIN/mingw32-make.exe" "$GCC_MCF_BIN/make.exe"
-
-          # Sanity: the prefixed binutils must really be present.
-          ls -l "$GCC_MCF_TOOLBIN/windres.exe" "$GCC_MCF_TOOLBIN/ar.exe"
-
-          echo "gcc-mcf:"
-          "$GCC_MCF_BIN/${TARGET}-gcc.exe" --version
-          echo "--- bundled tools ---"
-          "$GCC_MCF_BIN/cmake.exe" --version | head -1
-          "$GCC_MCF_BIN/meson.exe" --version || "$GCC_MCF_BIN/meson" --version
-          "$GCC_MCF_BIN/ninja.exe" --version
-          "$GCC_MCF_BIN/pkg-config.exe" --version || "$GCC_MCF_BIN/pkgconf.exe" --version
-
-      - name: Verify toolchain
+      - name: Install latest gcc-mcf toolchain
         run: |
           set -eux
 
-          # Make sure the toolchain's own bin dirs are on PATH, regardless of
-          # how the runner environment delivered them.
-          GCC_BIN="$(dirname "$(command -v "${TARGET}-gcc")")"
-          export PATH="$GCC_BIN:$(dirname "$GCC_BIN")/${TARGET}/bin:$PATH"
+          export PATH="/c/Program Files/7-Zip:$PATH"
 
+          command -v 7z
+
+          # -----------------------------------------------------------------
+          # Get gcc-mcf directory listing.
+          #
+          # We deliberately do NOT pin a specific release.
+          #
+          # The newest x86_64 UCRT archive is selected automatically.
+          # -----------------------------------------------------------------
+
+          LISTING=""
+
+          for attempt in 1 2 3; do
+
+            if LISTING=$(
+              curl -fsSL \
+                --retry 2 \
+                --retry-delay 5 \
+                https://gcc-mcf.lhmouse.com/
+            ); then
+              break
+            fi
+
+            if LISTING=$(
+              curl -fsSL \
+                --retry 2 \
+                --retry-delay 5 \
+                --resolve "gcc-mcf.lhmouse.com:443:${MCF_PINNED_IP}" \
+                https://gcc-mcf.lhmouse.com/
+            ); then
+              break
+            fi
+
+            echo "Attempt $attempt failed; retrying in 10 seconds..."
+            sleep 10
+          done
+
+          if [ -z "$LISTING" ]; then
+            echo "Error: could not fetch gcc-mcf directory listing" >&2
+            exit 1
+          fi
+
+          echo "gcc-mcf directory listing:"
+          echo "$LISTING" | head -40
+
+          # -----------------------------------------------------------------
+          # Find every x86_64-UCRT gcc-mcf archive.
+          #
+          # Expected:
+          #
+          #   mingw-w64-gcc-mcf_YYYYMMDD_GCCVERSION_x64-ucrt_HASH.7z
+          #
+          # Do NOT accept:
+          #
+          #   x86
+          #   x64-msvcrt
+          #   package manifests
+          # -----------------------------------------------------------------
+
+          GCC_MCF_FILES=$(
+            printf '%s\n' "$LISTING" |
+              grep -oE \
+                'mingw-w64-gcc-mcf_[0-9]{8}_[0-9][0-9.]*_x64-ucrt_[a-f0-9]+\.7z' |
+              sort -u
+          )
+
+          if [ -z "$GCC_MCF_FILES" ]; then
+            echo "Error: no x86_64 UCRT gcc-mcf archive found" >&2
+            exit 1
+          fi
+
+          echo "Available x86_64-UCRT gcc-mcf archives:"
+          printf '%s\n' "$GCC_MCF_FILES"
+
+          # -----------------------------------------------------------------
+          # Sort by the YYYYMMDD component and select the newest build.
+          #
+          # YYYYMMDD is numerically sortable, so this does not depend on the
+          # GCC version string.
+          # -----------------------------------------------------------------
+
+          GCC_MCF_FILE=$(
+            printf '%s\n' "$GCC_MCF_FILES" |
+              sort -t_ -k2,2nr |
+              head -n 1
+          )
+
+          if [ -z "$GCC_MCF_FILE" ]; then
+            echo "Error: failed to select latest gcc-mcf archive" >&2
+            exit 1
+          fi
+
+          echo "Selected gcc-mcf archive:"
+          echo "$GCC_MCF_FILE"
+
+          GCC_MCF_URL="https://gcc-mcf.lhmouse.com/$GCC_MCF_FILE"
+
+          echo "Downloading:"
+          echo "$GCC_MCF_URL"
+
+          # -----------------------------------------------------------------
+          # Download archive.
+          #
+          # Normal DNS first.
+          # Fallback --resolve second.
+          # -----------------------------------------------------------------
+
+          if ! curl -fL \
+            --retry 5 \
+            --retry-delay 5 \
+            "$GCC_MCF_URL" \
+            -o "$GCC_MCF_FILE"
+          then
+            curl -fL \
+              --retry 5 \
+              --retry-delay 5 \
+              --resolve "gcc-mcf.lhmouse.com:443:${MCF_PINNED_IP}" \
+              "$GCC_MCF_URL" \
+              -o "$GCC_MCF_FILE"
+          fi
+
+          test -s "$GCC_MCF_FILE"
+
+          ls -lh "$GCC_MCF_FILE"
+
+          # -----------------------------------------------------------------
+          # Extract
+          # -----------------------------------------------------------------
+
+          rm -rf /c/gcc-mcf
+          mkdir -p /c/gcc-mcf
+
+          echo "Extracting gcc-mcf..."
+
+          7z x \
+            "$GCC_MCF_FILE" \
+            -o/c/gcc-mcf \
+            -y
+
+          # -----------------------------------------------------------------
+          # Find compiler directory.
+          # -----------------------------------------------------------------
+
+          GCC_MCF_BIN=$(
+            find /c/gcc-mcf \
+              -name "${TARGET}-gcc.exe" \
+              -exec dirname {} \; |
+            head -n 1
+          )
+
+          if [ -z "$GCC_MCF_BIN" ]; then
+            echo "Error: could not find ${TARGET}-gcc.exe" >&2
+            echo "Available executables:" >&2
+            find /c/gcc-mcf -name "*.exe" | head -50 >&2
+            exit 1
+          fi
+
+          GCC_MCF_BIN_WIN=$(cygpath -w "$GCC_MCF_BIN")
+
+          echo "$GCC_MCF_BIN_WIN" >> "$GITHUB_PATH"
+
+          echo "gcc-mcf compiler directory:"
+          echo "$GCC_MCF_BIN"
+
+          # -----------------------------------------------------------------
+          # Find prefixed binutils.
+          #
+          # gcc-mcf uses a separate:
+          #
+          #   x86_64-w64-mingw32/bin/
+          #
+          # containing:
+          #
+          #   ar
+          #   nm
+          #   ranlib
+          #   strip
+          #   windres
+          #   dlltool
+          #   ...
+          # -----------------------------------------------------------------
+
+          GCC_MCF_TOOLBIN=$(
+            find /c/gcc-mcf \
+              -path "*/${TARGET}/bin" \
+              -type d |
+            head -n 1
+          )
+
+          if [ -z "$GCC_MCF_TOOLBIN" ]; then
+            echo "Error: could not find gcc-mcf target binutils directory" >&2
+            exit 1
+          fi
+
+          echo "$(cygpath -w "$GCC_MCF_TOOLBIN")" >> "$GITHUB_PATH"
+
+          echo "gcc-mcf binutils directory:"
+          echo "$GCC_MCF_TOOLBIN"
+
+          # -----------------------------------------------------------------
+          # gcc-mcf provides mingw32-make.exe.
+          #
+          # Some Autotools/LuaJIT build logic invokes plain "make".
+          # Provide make.exe as an alias.
+          # -----------------------------------------------------------------
+
+          if [ -f "$GCC_MCF_BIN/mingw32-make.exe" ]; then
+            cp -v \
+              "$GCC_MCF_BIN/mingw32-make.exe" \
+              "$GCC_MCF_BIN/make.exe"
+          else
+            echo "Error: mingw32-make.exe not found" >&2
+            exit 1
+          fi
+
+          # -----------------------------------------------------------------
+          # Verify required toolchain files before continuing.
+          # -----------------------------------------------------------------
+
+          test -f "$GCC_MCF_BIN/${TARGET}-gcc.exe"
+          test -f "$GCC_MCF_BIN/${TARGET}-g++.exe"
+
+          test -f "$GCC_MCF_TOOLBIN/ar.exe"
+          test -f "$GCC_MCF_TOOLBIN/nm.exe"
+          test -f "$GCC_MCF_TOOLBIN/ranlib.exe"
+          test -f "$GCC_MCF_TOOLBIN/strip.exe"
+          test -f "$GCC_MCF_TOOLBIN/windres.exe"
+          test -f "$GCC_MCF_TOOLBIN/dlltool.exe"
+
+          echo
+          echo "================ gcc-mcf ================"
+
+          "$GCC_MCF_BIN/${TARGET}-gcc.exe" --version
+
+          echo
+          echo "================ gcc configuration ================"
+
+          "$GCC_MCF_BIN/${TARGET}-gcc.exe" -v 2>&1
+
+          echo
+          echo "================ bundled tools ================"
+
+          "$GCC_MCF_BIN/cmake.exe" --version | head -1
+
+          if [ -f "$GCC_MCF_BIN/meson.exe" ]; then
+            "$GCC_MCF_BIN/meson.exe" --version
+          elif [ -f "$GCC_MCF_BIN/meson" ]; then
+            "$GCC_MCF_BIN/meson" --version
+          fi
+
+          "$GCC_MCF_BIN/ninja.exe" --version
+
+          if [ -f "$GCC_MCF_BIN/pkg-config.exe" ]; then
+            "$GCC_MCF_BIN/pkg-config.exe" --version
+          else
+            "$GCC_MCF_BIN/pkgconf.exe" --version
+          fi
+
+      # ---------------------------------------------------------------------
+      # Verify toolchain
+      # ---------------------------------------------------------------------
+
+      - name: Verify gcc-mcf toolchain
+        run: |
+          set -eux
+
+          GCC_BIN="$(dirname "$(command -v "${TARGET}-gcc")")"
+
+          # Ensure both compiler and target-prefixed binutils directories
+          # are at the front of PATH.
+          TOOLBIN="$(dirname "$GCC_BIN")/${TARGET}/bin"
+
+          if [ -d "$TOOLBIN" ]; then
+            export PATH="$GCC_BIN:$TOOLBIN:$PATH"
+          else
+            export PATH="$GCC_BIN:$PATH"
+          fi
+
+          echo "Compiler:"
           command -v "${TARGET}-gcc"
+
+          echo "C++ compiler:"
           command -v "${TARGET}-g++"
+
+          echo "Assembler:"
+          command -v "${TARGET}-gcc"
+
+          echo "windres:"
           command -v "${TARGET}-windres"
+
+          echo "ar:"
           command -v "${TARGET}-ar"
+
+          echo "nm:"
           command -v "${TARGET}-nm"
+
+          echo "ranlib:"
           command -v "${TARGET}-ranlib"
+
+          echo "strip:"
           command -v "${TARGET}-strip"
+
+          echo "dlltool:"
           command -v "${TARGET}-dlltool"
+
+          echo "make:"
           command -v make
+
+          echo
+          echo "================ gcc version ================"
 
           "${TARGET}-gcc" --version
           "${TARGET}-g++" --version
-          "${TARGET}-windres" --version || true
 
-          # Smoke test: compile and run a trivial Windows program with the
-          # full toolchain (cc1, collect2, ld, UCRT CRT, mcfgthread).
-          printf 'int main(void){return 0;}\n' > /tmp/mcf_test.c
-          "${TARGET}-gcc" /tmp/mcf_test.c -o /tmp/mcf_test.exe
+          echo
+          echo "================ thread model ================"
+
+          GCC_CONFIG=$("${TARGET}-gcc" -v 2>&1)
+
+          echo "$GCC_CONFIG"
+
+          if ! printf '%s\n' "$GCC_CONFIG" |
+              grep -qiE 'Thread model:.*mcf'; then
+            echo "Error: gcc is not using the MCF thread model" >&2
+            exit 1
+          fi
+
+          echo "MCF thread model detected."
+
+          # -----------------------------------------------------------------
+          # Verify the runtime DLLs supplied by gcc-mcf.
+          # -----------------------------------------------------------------
+
+          RUNTIME_DIR="$(dirname "$(command -v "${TARGET}-gcc")")"
+
+          test -f "$RUNTIME_DIR/libgcc_s_seh-1.dll"
+          test -f "$RUNTIME_DIR/libstdc++-6.dll"
+          test -f "$RUNTIME_DIR/libmcfgthread-2.dll"
+
+          echo
+          echo "================ runtime DLLs ================"
+
+          ls -lh \
+            "$RUNTIME_DIR/libgcc_s_seh-1.dll" \
+            "$RUNTIME_DIR/libstdc++-6.dll" \
+            "$RUNTIME_DIR/libmcfgthread-2.dll"
+
+          # -----------------------------------------------------------------
+          # Smoke test.
+          #
+          # This verifies:
+          #
+          #   compiler
+          #   cc1
+          #   collect2
+          #   GNU ld
+          #   UCRT
+          #   mingw-w64 CRT
+          #   mcfgthread
+          #
+          # by compiling and executing a native Windows executable.
+          # -----------------------------------------------------------------
+
+          printf '
+          #include <stdio.h>
+          int main(void)
+          {
+              puts("gcc-mcf smoke test passed");
+              return 0;
+          }
+          ' > /tmp/mcf_test.c
+
+          "${TARGET}-gcc" \
+            /tmp/mcf_test.c \
+            -o /tmp/mcf_test.exe
+
           /tmp/mcf_test.exe
+
+      # ---------------------------------------------------------------------
+      # Build dependencies
+      # ---------------------------------------------------------------------
 
       - name: Build libraries
         run: |
           ./ci/build-mingw64.sh
+
+      # ---------------------------------------------------------------------
+      # Build mpv
+      # ---------------------------------------------------------------------
 
       - name: Build mpv
         id: build
         run: |
           ./ci/build-mingw64.sh meson pack
 
+      # ---------------------------------------------------------------------
+      # Meson diagnostics
+      # ---------------------------------------------------------------------
+
       - name: Print meson log
         if: ${{ failure() && steps.build.outcome == 'failure' }}
         run: |
-          cat ./mingw_build/meson-logs/meson-log.txt
+          if [ -f ./mingw_build/meson-logs/meson-log.txt ]; then
+            cat ./mingw_build/meson-logs/meson-log.txt
+          else
+            echo "meson-log.txt not found"
+          fi
+
+      # ---------------------------------------------------------------------
+      # Functional test
+      # ---------------------------------------------------------------------
 
       - name: Functional test
         run: |
           cd artifact
-          ./mpv.com -v --no-config
+
+          ./mpv.com \
+            -v \
+            --no-config
+
+      # ---------------------------------------------------------------------
+      # Artifact name
+      # ---------------------------------------------------------------------
 
       - name: Get artifact name
         id: artifact
         run: |
-          VERSION_FILE=$(find . -path "*/common/version.h" -type f | head -n 1)
+          VERSION_FILE=$(find . \
+            -path "*/common/version.h" \
+            -type f |
+            head -n 1)
+
           VER=$(grep VERSION "$VERSION_FILE" | cut -d'"' -f2)
 
-          echo "name=mpv-$VER-${{ github.run_id }}-$TARGET" >> "$GITHUB_OUTPUT"
+          echo "name=mpv-$VER-${{ github.run_id }}-$TARGET" \
+            >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------------
+      # Upload artifact
+      # ---------------------------------------------------------------------
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: artifact/*
+
+      # ---------------------------------------------------------------------
+      # Save ccache
+      # ---------------------------------------------------------------------
 
       - name: Save ccache
         uses: actions/cache/save@v6
