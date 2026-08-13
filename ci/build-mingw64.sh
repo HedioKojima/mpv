@@ -24,7 +24,16 @@ if ! command -v pkg-config >/dev/null; then
     exit 1
 fi
 
-# gcc-mcf (GCC 16 + mcfgthread, UCRT)
+# ---------------------------------------------------------------------------
+# gcc-mcf toolchain
+#
+# This build uses the prebuilt GCC/MinGW-w64 toolchain from:
+#   https://gcc-mcf.lhmouse.com/
+#
+# The workflow installs the latest available x86_64 UCRT gcc-mcf package.
+# The compiler uses the MCF thread model.
+# ---------------------------------------------------------------------------
+
 export CC="$TARGET-gcc"
 export AS="$TARGET-gcc"
 export CXX="$TARGET-g++"
@@ -36,39 +45,54 @@ export WINDRES="$TARGET-windres"
 export DLLTOOL="$TARGET-dlltool"
 
 # The prefixed binutils (ar/nm/ranlib/strip/dlltool/windres) live in a
-# separate bin/ dir next to the compiler. Derive it from the gcc location
-# so the build does not depend on how the runner environment was set up.
+# separate bin/ directory next to the compiler. Derive it from the gcc
+# location so the build does not depend on how the runner environment
+# was configured.
 if command -v "$TARGET-gcc" >/dev/null; then
     gcc_bin_dir="$(dirname "$(command -v "$TARGET-gcc")")"
     gcc_toolbin="$(dirname "$gcc_bin_dir")/$TARGET/bin"
+
     if [ -d "$gcc_toolbin" ]; then
         export PATH="$gcc_toolbin:$PATH"
     fi
 fi
 
+# ---------------------------------------------------------------------------
 # Optimization
-# CPU baseline: x86-64-v3 (enables AVX2 and related instruction sets)
+# ---------------------------------------------------------------------------
+
+# CPU baseline: x86-64-v3
+# Enables AVX2, BMI, F16C, etc. for machines supporting x86-64-v3.
 export CFLAGS="-O3 -pipe -Wall -Wno-error=switch -march=x86-64-v3"
 export CXXFLAGS="-O3 -pipe -Wall -Wno-error=switch -march=x86-64-v3"
-# GCC uses GNU ld (ld.bfd) by default; do NOT pass -fuse-ld=lld
+
+# GCC-mcf uses GNU ld (ld.bfd) by default.
+# Do not use -fuse-ld=lld.
 export LDFLAGS="-fstack-protector-strong"
 
-# Merged from ci/build-common.sh
-# Fortify works with gcc-mcf: the __*_chk symbols are provided by libmingwex.
+# Fortify works with gcc-mcf: the relevant __*_chk symbols are provided
+# by the MinGW runtime libraries.
 export CFLAGS="$CFLAGS -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3"
 
-# Anything that uses pkg-config — force it to look only in our prefix,
-# NOT in the gcc-mcf toolchain's own lib/pkgconfig (which ships zlib-ng,
-# curl, iconv, etc. that would shadow our source-built copies).
+# ---------------------------------------------------------------------------
+# pkg-config isolation
+#
+# gcc-mcf itself ships some libraries/pkg-config files. Those must not shadow
+# the copies that we build below into our own prefix.
+# ---------------------------------------------------------------------------
+
 export PKG_CONFIG_SYSROOT_DIR="$prefix_dir"
 export PKG_CONFIG_LIBDIR="$PKG_CONFIG_SYSROOT_DIR/lib/pkgconfig"
+export PKG_CONFIG_PATH=
 export PKG_CONFIG_IGNORE_SYSTEM_CFLAGS=1
 export PKG_CONFIG_IGNORE_SYSTEM_LIBS=1
 
-# autotools(-like)
+# ---------------------------------------------------------------------------
+# Common configure / Meson settings
+# ---------------------------------------------------------------------------
+
 at_flags="--disable-static --enable-shared"
 
-# meson
 fam=x86_64
 
 cat >"$prefix_dir/crossfile" <<EOF
@@ -96,7 +120,10 @@ cpu = 'x86_64'
 endian = 'little'
 EOF
 
+# ---------------------------------------------------------------------------
 # CMake
+# ---------------------------------------------------------------------------
+
 cmake_args=(
     -Wno-dev
     -GNinja
@@ -117,10 +144,14 @@ cmake_args=(
     -DCMAKE_CXX_FLAGS="$CXXFLAGS"
 )
 
-# Use ccache through the compiler launcher rather than changing
-# the compiler path itself.
+# Use ccache through the compiler launcher rather than changing the compiler
+# path itself.
 export CCACHE_BASEDIR="${CCACHE_BASEDIR:-$PWD}"
 export CCACHE_DIR="${CCACHE_DIR:-$PWD/.ccache}"
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
 
 function builddir {
     [ -d "$1/builddir" ] && rm -rf "$1/builddir"
@@ -155,8 +186,8 @@ function gettar {
         cp -v "$DOWNLOAD_CACHE/$cachename" "$fname"
         cachename=
     else
-        # wget.exe from the toolchain is the primary downloader; fall back
-        # to Git Bash's curl in case the toolchain wget lacks CA certs.
+        # wget from gcc-mcf is the primary downloader.
+        # Fall back to Git Bash curl in case wget cannot establish TLS.
         $wget "$1" -O "$fname" || curl -fL "$1" -o "$fname" || return 1
     fi
 
@@ -181,7 +212,9 @@ function build_if_missing {
     [ -e "$mark_file" ] && return 0
 
     echo "::group::Building $1"
+
     _$name
+
     echo "::endgroup::"
 
     if [ ! -e "$mark_file" ]; then
@@ -190,7 +223,9 @@ function build_if_missing {
     fi
 }
 
-## mpv's dependencies
+# ---------------------------------------------------------------------------
+# mpv dependencies
+# ---------------------------------------------------------------------------
 
 _iconv () {
     local ver=1.19
@@ -462,8 +497,8 @@ _luajit () {
 
     pushd LuaJIT
 
-    # On Windows the gcc-mcf compiler produces native .exe files,
-    # so the same compiler serves as both host and target.
+    # gcc-mcf produces native Windows executables, so the same compiler
+    # can serve as both the host and target compiler here.
     local hostcc="ccache $TARGET-gcc"
 
     make TARGET_SYS=Windows clean
@@ -504,7 +539,10 @@ _curl () {
 _curl_mark=lib/libcurl.dll.a
 
 
-# Build dependencies.
+# ---------------------------------------------------------------------------
+# Build dependencies
+# ---------------------------------------------------------------------------
+
 for x in iconv zlib-ng shaderc spirv-cross nv-headers dav1d lcms2; do
     build_if_missing $x
 done
@@ -516,8 +554,9 @@ for x in ffmpeg libplacebo freetype fribidi harfbuzz libass luajit curl; do
     build_if_missing $x
 done
 
-
-## mpv
+# ---------------------------------------------------------------------------
+# mpv
+# ---------------------------------------------------------------------------
 
 if [ -z "$1" ]; then
     echo "Not building mpv."
@@ -527,20 +566,27 @@ fi
 CFLAGS+=" -I'$prefix_dir/include'"
 LDFLAGS+=" -L'$prefix_dir/lib'"
 
-export CFLAGS LDFLAGS
+export CFLAGS
+export LDFLAGS
 
 build=mingw_build
 rm -rf "$build"
 
 mpv_args=(
     --cross-file "$prefix_dir/crossfile"
+
     # Merged from ci/build-common.sh
     --werror
+
     -Dlibmpv=false
     -Dtests=false
+
     --buildtype release
+
     -Dlua=luajit
+
     -D{shaderc,spirv-cross,d3d11,libcurl}=enabled
+
     -Djavascript=disabled
     -Damf=disabled
 )
@@ -548,11 +594,15 @@ mpv_args=(
 meson setup "$build" "${mpv_args[@]}"
 meson compile -C "$build"
 
+# ---------------------------------------------------------------------------
+# Packaging
+# ---------------------------------------------------------------------------
 
 if [ "$2" = pack ]; then
     mkdir -p artifact/tmp
 
     echo "Copying:"
+
     cp -pv \
         "$build/mpv.com" \
         "$build/mpv.exe" \
@@ -563,16 +613,23 @@ if [ "$2" = pack ]; then
 
     shopt -s nullglob
 
-    # DLLs built by the dependency chain.
+    # DLLs built by this dependency chain.
     for file in "$prefix_dir/bin/"*.dll; do
         cp -p "$file" artifact/tmp/
     done
 
-    # gcc-mcf runtime DLLs — in MSYS2-style toolchains they live in the
-    # same bin/ directory as the compiler executables.
-    # (No libssp-0.dll: gcc-mcf has no shared libssp — the stack protector
-    # and fortify symbols are provided by libmingwex/libmcfgthread.)
+    # gcc-mcf runtime DLLs.
+    #
+    # The prebuilt gcc-mcf toolchain provides these alongside the compiler:
+    #
+    #   libgcc_s_seh-1.dll
+    #   libstdc++-6.dll
+    #   libmcfgthread-2.dll
+    #
+    # Do not attempt to package libssp-0.dll: gcc-mcf does not use a shared
+    # libssp runtime in the same way as some other MinGW distributions.
     GCC_MCF_BIN_DIR=$(dirname "$(command -v ${TARGET}-gcc)")
+
     echo "Runtime DLL dir: $GCC_MCF_BIN_DIR"
 
     for file in \
@@ -580,7 +637,11 @@ if [ "$2" = pack ]; then
         "$GCC_MCF_BIN_DIR/libstdc++-6.dll" \
         "$GCC_MCF_BIN_DIR/libmcfgthread-2.dll"
     do
-        [ -f "$file" ] && cp -p "$file" artifact/tmp/
+        if [ -f "$file" ]; then
+            cp -p "$file" artifact/tmp/
+        else
+            echo "Warning: missing runtime DLL: $file" >&2
+        fi
     done
 
     echo "Selecting DLLs:"
@@ -605,7 +666,7 @@ if [ "$2" = pack ]; then
 
     [[ -f vulkan-1.dll ]] && dlls+=(vulkan-1.dll)
 
-    # Remove names that don't exist.
+    # Remove names that do not exist.
     existing=()
 
     for file in "${dlls[@]}"; do
