@@ -23,6 +23,10 @@
 #      opencl/devices）、网络协议（ssh/srt/rist/zmq/rubberband）；mpv 侧禁用
 #      rubberband。保留 dav1d/libplacebo/vulkan/openssl+schannel/libcurl/
 #      svtav1/libwebp/libjxl/openjpeg 等。
+#   4. [体积裁剪 2] --disable-encoders 全关编码器，仅保留 png/mjpeg/libwebp
+#      供 mpv 截图使用；--o 转码与 stream-record 因此不可用。
+#      --disable-decoder 关掉定点重复解码器（aac/ac3/mp1/mp2/mp3/mp3adu/
+#      mp3on4 的 fixed 版），float 版保留，播放不受影响。
 set -euo pipefail
 
 : "${FFBUILD_PREFIX:?not running in a FFmpeg-Builds image}"
@@ -57,7 +61,9 @@ pushd ffmpeg
             --disable-{libdavs2,libxavs2,libuavs3d,liboapv,liblcevc-dec,libopencore-amrnb,libopencore-amrwb,libgme,libopenmpt,libzvbi,libaribb24,libaribcaption} \
             --disable-{whisper,libvmaf,libvidstab,chromaprint,frei0r,lv2,avisynth,libsnappy,libsoxr,sdl2,opencl} \
             --disable-devices \
-            --disable-{libssh,libsrt,librist,libzmq,librubberband} || { cat ffbuild/config.log; exit 1; }
+            --disable-{libssh,libsrt,librist,libzmq,librubberband} \
+            --disable-encoders --enable-encoder={png,mjpeg,libwebp} \
+            --disable-decoder={aac_fixed,ac3_fixed,mp1,mp2,mp3,mp3adu,mp3on4} || { cat ffbuild/config.log; exit 1; }
 make -j"$(nproc)"
 make install
 popd
