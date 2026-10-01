@@ -27,6 +27,9 @@
 #      libsvtav1/libjxl 供 mpv 截图使用；--o 转码与 stream-record 因此不可用。
 #      --disable-decoder 关掉定点重复解码器（aac/ac3/mp1/mp2/mp3/mp3adu/
 #      mp3on4 的 fixed 版），float 版保留，播放不受影响。
+#   5. [体积裁剪 3] --disable-amf / --disable-libvpl：去掉 AMD AMF 编码封装与
+#      Intel QSV(libvpl) 接口、mpv 的 vf_amf 滤镜。AMD/Intel 硬解走内置的
+#      d3d11va 不受影响，NVIDIA nvdec 保留。
 set -euo pipefail
 
 : "${FFBUILD_PREFIX:?not running in a FFmpeg-Builds image}"
@@ -62,6 +65,7 @@ pushd ffmpeg
             --disable-{whisper,libvmaf,libvidstab,chromaprint,frei0r,lv2,avisynth,libsnappy,libsoxr,sdl2,opencl} \
             --disable-devices \
             --disable-{libssh,libsrt,librist,libzmq,librubberband} \
+            --disable-{amf,libvpl} \
             --disable-encoders --enable-encoder={png,mjpeg,libwebp,libsvtav1,libjxl} \
             --disable-decoder={aac_fixed,ac3_fixed,mp1,mp2,mp3,mp3adu,mp3on4} || { cat ffbuild/config.log; exit 1; }
 make -j"$(nproc)"
@@ -124,15 +128,15 @@ mpv_args=(
     -Dmujs:werror=false
     -Dmujs:default_library=static
     -Dlua=luajit
-    -D{amf,d3d11,javascript,lcms2,libbluray,libcurl,shaderc,spirv-cross}=enabled
+    -D{d3d11,javascript,lcms2,libbluray,libcurl,shaderc,spirv-cross}=enabled
     -D{subrandr,vulkan,win32-smtc,zimg}=enabled
 )
 if $gpl; then
     # Only the GPL image carries the dependencies of the GPL features.
     mpv_args+=(-D{dvda,dvdnav}=enabled)
 fi
-# [HedioKojima/mpv] 体积裁剪：禁用 rubberband（变速变调），mpv 其余直连库保留
-mpv_args+=(-Drubberband=disabled)
+# [HedioKojima/mpv] 体积裁剪：禁用 rubberband（变速变调）与 vf_amf（AMD GPU 滤镜）
+mpv_args+=(-Drubberband=disabled -Damf=disabled)
 meson setup build "${mpv_args[@]}"
 meson compile -C build
 endgroup
