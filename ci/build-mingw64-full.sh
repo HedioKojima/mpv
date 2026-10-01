@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Static mpv and libmpv builds on top of the FFmpeg-Builds container images
-# (ghcr.io/btbn/ffmpeg-builds/<target>-<variant>, see
+# Static mpv builds on top of the FFmpeg-Builds container images
+# (ghcr.io/btbn/ffmpeg-builds/win64-gpl, see
 # https://github.com/BtbN/FFmpeg-Builds). The image ships the cross toolchain,
 # a matching /cross.meson and every FFmpeg dependency as static library in
 # $FFBUILD_PREFIX, so only FFmpeg itself and the things FFmpeg does not need
@@ -10,7 +10,12 @@
 #   docker run --rm -v "$PWD:/mpv" -w /mpv \
 #       ghcr.io/btbn/ffmpeg-builds/win64-gpl:latest ./ci/build-mingw64-full.sh
 #
-# The mpv binaries end up in artifact/, the libmpv package in artifact-libmpv/.
+# The mpv binaries end up in artifact/.
+#
+# [HedioKojima/mpv] 本文件基于上游 mpv-player/mpv master 的同名脚本修改：
+#   1. 只打包 mpv.exe/mpv.com，不再打包 libmpv（配合 build-common.sh 中
+#      -Dlibmpv=false 使用，Packaging 段删掉了 artifact-libmpv 相关内容）。
+#   2. 其余构建流程（FFmpeg / LuaJIT / subrandr / cppwinrt / mpv）与上游一致。
 set -euo pipefail
 
 : "${FFBUILD_PREFIX:?not running in a FFmpeg-Builds image}"
@@ -117,12 +122,10 @@ license=LICENSE.LGPL
 if $gpl; then
     license=LICENSE.GPL
 fi
-mkdir -p artifact artifact-libmpv/include/mpv
+# [HedioKojima/mpv] 只打包 mpv 本体，不打包 libmpv
+mkdir -p artifact
 cp -p build/mpv.{exe,com} etc/mpv-*.bat "$license" artifact/
-cp -p build/libmpv*.dll build/libmpv*.dll.a "$license" artifact-libmpv/
-cp -p include/mpv/*.h artifact-libmpv/include/mpv/
 cp -p "$FFBUILD_PREFIX"/share/java/libbluray-*.jar artifact/
-cp -p "$FFBUILD_PREFIX"/share/java/libbluray-*.jar artifact-libmpv/
-"${FFBUILD_CROSS_PREFIX}strip" artifact/mpv.{exe,com} artifact-libmpv/libmpv*.dll
-ls -l artifact artifact-libmpv
+"${FFBUILD_CROSS_PREFIX}strip" artifact/mpv.{exe,com}
+ls -l artifact
 endgroup
