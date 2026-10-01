@@ -16,6 +16,13 @@
 #   1. 只打包 mpv.exe/mpv.com，不再打包 libmpv（配合 build-common.sh 中
 #      -Dlibmpv=false 使用，Packaging 段删掉了 artifact-libmpv 相关内容）。
 #   2. 其余构建流程（FFmpeg / LuaJIT / subrandr / cppwinrt / mpv）与上游一致。
+#   3. [体积裁剪] FFmpeg configure 追加 --disable：编码器（x264/x265/aom/vpx/lame/
+#      xvid/vvenc/openh264/kvazaar/twolame/theora/vorbis/opus，原生解码不受影响）、
+#      冷门解码（AVS2/AVS3/APV/LCEVC/AMR/gme/openmpt/zvbi/arib）、滤镜杂项
+#      （whisper/vmaf/vidstab/chromaprint/frei0r/lv2/avisynth/snappy/soxr/sdl2/
+#      opencl/devices）、网络协议（ssh/srt/rist/zmq/rubberband）；mpv 侧禁用
+#      rubberband。保留 dav1d/libplacebo/vulkan/openssl+schannel/libcurl/
+#      svtav1/libwebp/libjxl/openjpeg 等。
 set -euo pipefail
 
 : "${FFBUILD_PREFIX:?not running in a FFmpeg-Builds image}"
@@ -45,7 +52,12 @@ pushd ffmpeg
             --extra-ldexeflags="$FF_LDEXEFLAGS" \
             --cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --nm="$NM" \
             --enable-static --disable-shared --disable-{doc,programs} \
-            --disable-{librav1e,librsvg,openal} || { cat ffbuild/config.log; exit 1; }
+            --disable-{librav1e,librsvg,openal} \
+            --disable-{libx264,libx265,libaom,libvpx,libmp3lame,libxvid,libvvenc,libopenh264,libkvazaar,libtwolame,libtheora,libvorbis,libopus} \
+            --disable-{libdavs2,libxavs2,libuavs3d,liboapv,liblcevc-dec,libopencore-amrnb,libopencore-amrwb,libgme,libopenmpt,libzvbi,libaribb24,libaribcaption} \
+            --disable-{whisper,libvmaf,libvidstab,chromaprint,frei0r,lv2,avisynth,libsnappy,libsoxr,sdl2,opencl} \
+            --disable-devices \
+            --disable-{libssh,libsrt,librist,libzmq,librubberband} || { cat ffbuild/config.log; exit 1; }
 make -j"$(nproc)"
 make install
 popd
@@ -111,8 +123,10 @@ mpv_args=(
 )
 if $gpl; then
     # Only the GPL image carries the dependencies of the GPL features.
-    mpv_args+=(-D{dvda,dvdnav,rubberband}=enabled)
+    mpv_args+=(-D{dvda,dvdnav}=enabled)
 fi
+# [HedioKojima/mpv] 体积裁剪：禁用 rubberband（变速变调），mpv 其余直连库保留
+mpv_args+=(-Drubberband=disabled)
 meson setup build "${mpv_args[@]}"
 meson compile -C build
 endgroup
