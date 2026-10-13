@@ -65,7 +65,7 @@ pushd ffmpeg
             --disable-{whisper,libvmaf,libvidstab,chromaprint,frei0r,lv2,avisynth,libsnappy,libsoxr,sdl2,opencl} \
             --disable-devices \
             --disable-{libssh,libsrt,librist,libzmq,librubberband} \
-            --disable-{amf,libvpl} \
+            --disable-{amf,libvpl,vapoursynth,gmp} \
             --disable-encoders --enable-encoder={png,mjpeg,libwebp,libsvtav1,libjxl} \
             --disable-decoder={aac_fixed,ac3_fixed,mp1,mp2,mp3,mp3adu,mp3on4} || { cat ffbuild/config.log; exit 1; }
 make -j"$(nproc)"
@@ -149,7 +149,6 @@ fi
 # [HedioKojima/mpv] 只打包 mpv 本体，不打包 libmpv
 mkdir -p artifact
 cp -p build/mpv.{exe,com} etc/mpv-*.bat "$license" artifact/
-cp -p "$FFBUILD_PREFIX"/share/java/libbluray-*.jar artifact/
 "${FFBUILD_CROSS_PREFIX}strip" artifact/mpv.{exe,com}
 ls -l artifact
 endgroup
