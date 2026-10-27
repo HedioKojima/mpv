@@ -16,13 +16,13 @@ permissions: {}
 
 jobs:
   mpv-win64:
-    # BtbN/FFmpeg-Builds 的 win64-gpl 镜像：
-    # 自带 mingw 交叉工具链、/cross.meson、全套 FFmpeg 静态依赖、wine、meson
+    # nanake/ffmpeg-tinderbox 的 win64-nonfree 镜像：
+    # 自带 mingw-w64(UCRT) 交叉工具链、/cross.meson、全套静态依赖（含 fdk-aac /
+    # xHE-AAC / MPEG-H / LCEVC 等 non-free 组件）、meson。
+    # 注意：该镜像没有 wine，所以不做 wine 冒烟测试，改为检查 exe 的导入表。
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/btbn/ffmpeg-builds/win64-gpl:latest
-      env:
-        WINEPREFIX: /tmp/wine
+      image: ghcr.io/nanake/win64-nonfree:latest
     steps:
       # 本仓库只放了 CI 文件、没有 mpv 源码，所以先拉上游 master。
       # fetch-depth: 0 + fetch-tags 让 git describe 能算出 v0.x.y-n-gxxxx 完整版本号
@@ -59,6 +59,21 @@ jobs:
         run: |
           cat ./mpv/build/meson-logs/meson-log.txt
 
+      # 静态链接自检：镜像里的 import library（*.dll.a）已被删除，exe 只应依赖
+      # Windows 系统 DLL。若出现 libgcc/libstdc++/libwinpthread 说明有东西退化成
+      # 动态链接，运行时会在用户机器上缺 DLL，直接失败。
+      - name: Check DLL imports
+        working-directory: mpv/artifact
+        run: |
+          OBJDUMP="${FFBUILD_CROSS_PREFIX}objdump"
+          command -v "$OBJDUMP" >/dev/null 2>&1 || OBJDUMP=objdump
+          DLLS="${RUNNER_TEMP:-/tmp}/dlls.txt"
+          "$OBJDUMP" -p mpv.exe | sed -n 's/^[[:space:]]*DLL Name: //p' | tee "$DLLS"
+          if grep -Eqi '^(libgcc|libstdc\+\+|libwinpthread|libssp)' "$DLLS"; then
+            echo "::error::mpv.exe imports a non-system DLL, the build is not self-contained"
+            exit 1
+          fi
+
       - name: Artifact name
         id: artifact
         run: |
@@ -70,10 +85,3 @@ jobs:
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: mpv/artifact/*
-
-      # wine 冒烟测试：确认 exe 能正常启动。失败不影响已上传的产物
-      - name: Smoke test with wine
-        continue-on-error: true
-        working-directory: mpv/artifact
-        run: |
-          wine ./mpv.com -v --no-config
