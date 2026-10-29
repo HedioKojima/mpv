@@ -331,7 +331,7 @@ cmake -GNinja -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
 ninja -j"$(nproc)"
 popd
 mkdir -p "$PREFIX/include/shaderc" "$PREFIX/lib/pkgconfig"
-cp -a shaderc/include/shaderc/. "$PREFIX/include/shaderc/"
+cp -a libshaderc/include/shaderc/. "$PREFIX/include/shaderc/"
 cp build/libshaderc/libshaderc_combined.a "$PREFIX/lib/"
 cp build/shaderc_combined.pc "$PREFIX/lib/pkgconfig/shaderc.pc"
 popd
