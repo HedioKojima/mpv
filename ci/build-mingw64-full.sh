@@ -170,8 +170,18 @@ cmake_build fast_float -DBUILD_TESTING=OFF
 endgroup
 
 group "Building xxhash"
+# The official cmake project lives in build/cmake, not the repo root
+# (Kosm8: -S <src>/build/cmake). Default branch is dev; no submodules.
 $gitclone https://github.com/Cyan4973/xxHash.git
-cmake_build xxHash -DBUILD_SHARED_LIBS=OFF -DXXHASH_BUILD_XXHSUM=OFF
+mkdir -p xxhash-build
+pushd xxhash-build
+cmake -GNinja -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DBUILD_SHARED_LIBS=OFF -DXXHASH_BUILD_XXHSUM=OFF -DDISPATCH=ON \
+    ../xxHash/build/cmake
+ninja -j"$(nproc)"
+ninja install
+popd
 endgroup
 
 # ===========================libass 链========================================
