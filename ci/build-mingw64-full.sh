@@ -428,7 +428,9 @@ group "Building cppwinrt"
 cppwinrt_ver=2.0.250303.1
 windows_rs_ver=73
 
-wget -q "https://www.nuget.org/api/v2/package/Microsoft.Windows.CppWinRT/$cppwinrt_ver" -O - | tar -xz
+# cppwinrt source tarball; tag has no "v" prefix. (The nuget package is a
+# zip and ships a Windows exe -- useless on the Linux runner.)
+wget -q "https://github.com/microsoft/cppwinrt/archive/refs/tags/$cppwinrt_ver.tar.gz" -O - | tar -xz
 
 git clone --depth=1 --filter=blob:none --sparse -b "$windows_rs_ver" \
     https://github.com/microsoft/windows-rs.git
