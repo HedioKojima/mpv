@@ -25,7 +25,7 @@
 # ffmpeg encoders are disabled except what mpv screenshots/spdif need
 # (libjxl/png/ac3/dca/eac3/truehd). Features intentionally disabled:
 # javascript(mujs), libsixel, subrandr, vapoursynth, libcurl, rubberband,
-# dvdnav, cuda-hwaccel, cdda, openal, sdl2, pulse, egl-angle.
+# dvdnav, cuda-hwaccel, cdda, openal, sdl2, pulse, egl-angle, amf.
 set -euo pipefail
 
 # ===========================layout===========================================
@@ -407,13 +407,6 @@ cmake_build uchardet -DBUILD_SHARED_LIBS=OFF -DBUILD_BINARY=OFF \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 endgroup
 
-group "Copying AMF headers"
-# hwdec=amf (AMD VCN) via ffmpeg's amf hwaccel; headers only, no build.
-$gitclone https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git
-mkdir -p "$PREFIX/include"
-cp -r AMF/amf/public/include/AMF "$PREFIX/include/"
-endgroup
-
 group "Building LuaJIT"
 $gitclone -b v2.1 https://github.com/LuaJIT/LuaJIT.git
 pushd LuaJIT
@@ -471,7 +464,7 @@ pushd ffmpeg
     --enable-gpl --enable-static --disable-shared --disable-{doc,programs} \
     --disable-autodetect --disable-debug --disable-avdevice \
     --enable-runtime-cpudetect --enable-lto=thin \
-    --enable-{zlib,iconv,libdav1d,libjxl,zimg,schannel,amf} \
+    --enable-{zlib,iconv,libdav1d,libjxl,zimg,schannel} \
     --disable-encoders \
     --enable-encoder={libjxl,png,ac3,dca,eac3,truehd} \
     --disable-{librav1e,librsvg,openal} \
@@ -502,7 +495,7 @@ mpv_args=(
     -Dcpp_link_args="-L$PREFIX/lib -liconv"
     -Dgpl=$gpl
     -Dlua=luajit
-    -D{amf,d3d11,iconv,lcms2,libarchive,libbluray,shaderc,spirv-cross,uchardet,vulkan,win32-smtc,zimg,zlib}=enabled
+    -D{d3d11,iconv,lcms2,libarchive,libbluray,shaderc,spirv-cross,uchardet,vulkan,win32-smtc,zimg,zlib}=enabled
     # Explicitly disable everything not built above, so nothing unwanted gets
     # picked up accidentally (crossfile already sets wrap_mode=nofallback).
     -D{cdda,cuda-hwaccel,jpeg,javascript,libcurl,openal,pulse,rubberband,sdl2-audio,sdl2-video,sixel,subrandr,vapoursynth,dvdnav,egl-angle,egl-angle-lib,egl-angle-win32}=disabled
