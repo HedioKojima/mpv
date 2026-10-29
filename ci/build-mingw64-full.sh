@@ -307,10 +307,11 @@ popd
 endgroup
 
 group "Building shaderc"
-# third_party glslang/spirv-tools come in via --recursive clone at the
-# shaderc repo's known-good pointers.
+# shaderc dropped git submodules for a Chromium-style DEPS file; sync the
+# known-good third_party pointers with its own tool (BtbN does the same).
 $gitclone https://github.com/google/shaderc.git
 pushd shaderc
+python3 utils/git-sync-deps
 mkdir -p build
 pushd build
 cmake -GNinja -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
