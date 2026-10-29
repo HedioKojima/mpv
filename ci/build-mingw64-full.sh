@@ -16,9 +16,11 @@
 # A single static mpv.exe/mpv.com ends up in artifact/ (no libmpv).
 #
 # Version policy: everything tracks git master. The only pinned things are
-# the cppwinrt/windows-rs versions inherited from the upstream mpv CI script
-# (bump them together with upstream). shaderc's glslang/spirv-* submodules
-# follow the known-good pointers of the shaderc repo itself.
+# libiconv (GNU release tarball: the savannah git needs a gnulib bootstrap
+# whose Makefile.devel pins versioned autotools), the cppwinrt/windows-rs
+# versions inherited from the upstream mpv CI script (bump them together
+# with upstream), and shaderc's glslang/spirv-* submodules which follow the
+# known-good pointers of the shaderc repo itself.
 #
 # ffmpeg encoders are disabled except what mpv screenshots/spdif need
 # (libjxl/png/ac3/dca/eac3/truehd). Features intentionally disabled:
@@ -141,13 +143,17 @@ popd
 endgroup
 
 group "Building libiconv"
-# savannah clone + local gnulib, then host-run autogen (same as BtbN)
-$gitclone https://git.savannah.gnu.org/git/libiconv.git
-$gitclone --filter=blob:none https://github.com/coreutils/gnulib.git libiconv/gnulib
-rm -rf libiconv/gnulib/.git
-pushd libiconv
-(unset CC CFLAGS GMAKE && ./autogen.sh)
-./configure --host="$TARGET" --prefix="$PREFIX" --disable-shared --enable-extra-encodings
+# GNU release tarball ships a pre-generated configure: no savannah git, no
+# gnulib bootstrap (its Makefile.devel pins versioned autotools like
+# aclocal-1.18, which the runner lacks). Recipe from Kosm8/rm
+# packages/libiconv.cmake; hash verified against the aliyun GNU mirror.
+tarball=libiconv-1.19.tar.gz
+curl -sL "https://www.mirrorservice.org/sites/ftp.gnu.org/gnu/libiconv/$tarball" -o "$tarball"
+echo "88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6  $tarball" | sha256sum -c -
+rm -rf libiconv-1.19
+tar -xzf "$tarball"
+pushd libiconv-1.19
+./configure --host="$TARGET" --prefix="$PREFIX" --disable-shared --enable-extra-encodings --disable-nls
 make -j"$(nproc)"
 make install
 popd
@@ -338,7 +344,7 @@ $gitclone https://code.videolan.org/videolan/libplacebo.git
 meson_build libplacebo -Dvulkan=enabled -Dvk-proc-addr=enabled \
     -Dvulkan-registry="$PREFIX"/share/vulkan/registry/vk.xml \
     -Dshaderc=enabled -Dglslang=disabled -Dlcms=enabled -Dxxhash=enabled \
-    -Dopengl=disabled -Dd3d11=enabled \
+    -Dopengl=enabled -Dd3d11=enabled \
     -Ddemos=false -Dtests=false -Dbench=false -Dfuzz=false
 echo "Libs.private: -lc++" >> "$PREFIX"/lib/pkgconfig/libplacebo.pc
 endgroup
