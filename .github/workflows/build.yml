@@ -18,11 +18,6 @@ jobs:
     # 依赖 prefix = llvm/x86_64-w64-mingw32，即 clang 的默认 sysroot）。
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout CI overlay (this repo)
-        uses: actions/checkout@v4
-        with:
-          path: ci-overlay
-
       # fetch-depth: 0 + fetch-tags 让 git describe 能算出 v0.x.y-n-gxxxx 完整版本号
       # （mpv 的版本号靠 git describe --tags --match v0.* 生成，浅克隆会退化成 dev 版本）
       - name: Checkout mpv source (upstream master)
@@ -32,6 +27,14 @@ jobs:
           ref: master
           fetch-depth: 0
           fetch-tags: true
+
+      # 必须在 mpv checkout 之后：actions/checkout 默认 clean: true 会对根执行
+      # git clean -ffdx，untracked 的 ci-overlay/ 若先 checkout 会被整个删掉。
+      # 带 path 的 checkout 只清理该子目录，不影响根。
+      - name: Checkout CI overlay (this repo)
+        uses: actions/checkout@v4
+        with:
+          path: ci-overlay
 
       - name: Install build dependencies
         run: |
