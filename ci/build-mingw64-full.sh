@@ -338,7 +338,7 @@ $gitclone https://code.videolan.org/videolan/libplacebo.git
 meson_build libplacebo -Dvulkan=enabled -Dvk-proc-addr=enabled \
     -Dvulkan-registry="$PREFIX"/share/vulkan/registry/vk.xml \
     -Dshaderc=enabled -Dglslang=disabled -Dlcms=enabled -Dxxhash=enabled \
-    -Dopengl=enabled -Dd3d11=enabled \
+    -Dopengl=disabled -Dd3d11=enabled \
     -Ddemos=false -Dtests=false -Dbench=false -Dfuzz=false
 echo "Libs.private: -lc++" >> "$PREFIX"/lib/pkgconfig/libplacebo.pc
 endgroup
