@@ -209,7 +209,9 @@ endgroup
 group "Building libunibreak"
 $gitclone https://github.com/adah1972/libunibreak.git
 pushd libunibreak
-./autogen.sh
+# autogen.sh runs ./configure itself unless NOCONFIGURE is set; the bare
+# run would fail cross-compile checks (PE binaries can't execute on Linux).
+NOCONFIGURE=1 ./autogen.sh
 ./configure --host="$TARGET" --prefix="$PREFIX" --disable-shared
 make -j"$(nproc)"
 make install
