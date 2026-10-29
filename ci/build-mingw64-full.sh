@@ -291,10 +291,11 @@ cmake_build Vulkan-Headers -DVULKAN_HEADERS_ENABLE_MODULE=NO \
 endgroup
 
 group "Building Vulkan-Shim-Loader"
-# BtbN's static vulkan loader; needs a Vulkan-Headers checkout in-tree.
+# BtbN's static vulkan loader. The repo carries Vulkan-Headers as a git
+# submodule; the --recursive clone already brings it in, so no manual clone
+# (would collide: "destination path already exists").
 $gitclone https://github.com/BtbN/Vulkan-Shim-Loader.git
 pushd Vulkan-Shim-Loader
-git clone --depth=1 https://github.com/KhronosGroup/Vulkan-Headers.git Vulkan-Headers
 mkdir -p build
 pushd build
 cmake -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" -DCMAKE_BUILD_TYPE=Release \
