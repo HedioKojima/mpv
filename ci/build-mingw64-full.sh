@@ -466,7 +466,7 @@ pushd ffmpeg
     --enable-gpl --enable-static --disable-shared --disable-{doc,programs} \
     --disable-autodetect --disable-debug --disable-avdevice \
     --enable-runtime-cpudetect --enable-lto=thin \
-    --enable-{zlib,iconv,libdav1d,libjxl,zimg,schannel} \
+    --enable-{zlib,iconv,libdav1d,libjxl,libzimg,schannel} \
     --disable-encoders \
     --enable-encoder={libjxl,png,ac3,dca,eac3,truehd} \
     --disable-{librav1e,librsvg,openal} \
