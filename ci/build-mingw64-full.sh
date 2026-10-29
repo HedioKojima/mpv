@@ -499,6 +499,9 @@ mpv_args=(
     # meson issue 10172: --prefer-static meson searches for libiconv only in
     # the compiler's own directories.
     -Dc_link_args="-L$PREFIX/lib -liconv"
+    # uchardet master deprecates uchardet_get_charset, which mpv master still
+    # uses (and mpv builds with -Werror) -- silence until mpv switches API.
+    -Dc_args="-Wno-deprecated-declarations" \
     -Dcpp_link_args="-L$PREFIX/lib -liconv"
     -Dgpl=$gpl
     -Dlua=luajit
