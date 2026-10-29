@@ -57,7 +57,11 @@ jobs:
 
       - name: Build (all deps from git master)
         run: |
-          cp ci-overlay/ci/build-mingw64-full.sh ci/build-mingw64-full.sh
+          # 兼容脚本放在仓库根或 ci/ 下任一位置
+          script=$(find ci-overlay -name build-mingw64-full.sh -print -quit)
+          test -n "$script" || { echo "build-mingw64-full.sh not found in this repo"; exit 1; }
+          mkdir -p ci
+          cp "$script" ci/build-mingw64-full.sh
           ./ci/build-mingw64-full.sh
 
       - name: Check DLL imports (static single-file assertion)
