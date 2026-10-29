@@ -460,7 +460,12 @@ group "Building FFmpeg"
 # Built-in hwaccels (d3d11va/dxva2) are always on for mingw targets.
 $gitclone https://github.com/FFmpeg/FFmpeg.git ffmpeg
 pushd ffmpeg
-./configure --prefix="$PREFIX" --pkg-config-flags="--static" \
+# llvm-mingw ships no $TARGET-pkg-config, and ffmpeg configure does NOT read
+# the PKG_CONFIG env var: it defaults to ${cross_prefix}pkg-config and
+# silently degrades to /bin/false when missing (-> "dav1d not found using
+# pkg-config"). Pass it explicitly; search dirs come from the global
+# PKG_CONFIG_LIBDIR export above.
+./configure --prefix="$PREFIX" --pkg-config=pkg-config --pkg-config-flags="--static" \
     --cross-prefix="$TARGET-" --arch=x86_64 --target-os=mingw32 \
     --enable-cross-compile \
     --enable-gpl --enable-static --disable-shared --disable-{doc,programs} \
