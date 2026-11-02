@@ -51,23 +51,27 @@ export AR=$TARGET-ar
 export RANLIB=$TARGET-ranlib
 export NM=$TARGET-nm
 # -O3 baseline, Zen 3+ only (znver3 binaries do NOT run on Zen1/Zen2/Intel).
-# -f{function,data}-sections: compile-time section split so the final
-# --gc-sections pass drops unreferenced code per-function instead of
-# per-object (mpv-win relies on the same pairing via its ld wrapper).
-export CFLAGS="-O3 -pipe -march=znver3 -mtune=znver3 -ffunction-sections -fdata-sections"
+# -ffunction-sections/-fdata-sections: let the final link drop dead code with
+#   --gc-sections (without them gc-sections can only drop whole object files).
+# -flto=thin: dependencies are archived as bitcode, so the final mpv link can
+#   inline across library boundaries instead of only inside mpv itself.
+export CFLAGS="-O3 -pipe -march=znver3 -mtune=znver3 -ffunction-sections -fdata-sections -flto=thin"
 export CXXFLAGS="$CFLAGS"
+# Link-time optimisation + size trimming. These only take real effect on the
+# final executable link, but exporting them is harmless for the per-package
+# configure probes and keeps autotools/cmake packages consistent.
+#   --gc-sections  : needs -ffunction/-fdata-sections above to do anything
+#   --icf=all      : folds identical code (use --icf=safe if the link errors)
+#   --lto-O3/CGO3  : run the LTO backend at O3 too, not just the frontend
+export LDFLAGS="-Wl,--gc-sections -Wl,--icf=all -Wl,-O3 -Wl,--lto-O3 -Wl,--lto-CGO3"
+# ThinLTO cache: repeat/local builds get much faster instead of re-running
+# codegen from scratch every time.
+export LDFLAGS="$LDFLAGS -Wl,--thinlto-cache-dir=$PWD/thinlto-cache"
+mkdir -p "$PWD/thinlto-cache"
+# PE: drop the relocation section. Delete this line if your lld rejects it.
+export LDFLAGS="$LDFLAGS -Wl,-Xlink=-release"
 export PKG_CONFIG=pkg-config
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
-# Link-time size trimming: env-injected equivalent of mpv-win's ld.lld
-# wrapper (llvm-ld.in, which injects --gc-sections --icf=all on every link).
-# --gc-sections needs the section split above; --icf=all folds identical
-# functions (proven safe across this whole dep set in mpv-win). meson /
-# cmake / autotools all consume LDFLAGS, probe links included -- that only
-# costs a bit of configure time, no correctness risk (gc keeps every
-# referenced section). The wrapper's -O3 --lto-O3 --lto-CGO3 are already
-# covered by CFLAGS -O3 through the clang driver, and a thinlto cache dir is
-# pointless on one-shot CI runners, so neither is replicated.
-export LDFLAGS="-Wl,--gc-sections -Wl,--icf=all"
 
 # meson cross file. prefer_static/wrap_mode=nofallback here apply to every
 # meson package including mpv: no leftover libs, no meson wraps.
@@ -423,12 +427,16 @@ endgroup
 group "Building LuaJIT"
 $gitclone -b v2.1 https://github.com/LuaJIT/LuaJIT.git
 pushd LuaJIT
+# LuaJIT is the one package that does NOT get -flto=thin/-ffunction-sections:
+# its amalgamated build + self-modifying codegen miscompiles under LTO, and the
+# LuaJIT Makefile scrubs unknown flags anyway. Plain -O3 -march only.
+LUAJIT_CFLAGS="-O3 -pipe -march=znver3"
 # libm is the only private dep on llvm-mingw
 sed -i 's/^Libs.private:.*/Libs.private: -lm/' etc/luajit.pc
 # FILE_T and INSTALL_DEP are only needed to glue the install target
 make TARGET_SYS=Windows clean
 make TARGET_SYS=Windows PREFIX="$PREFIX" HOST_CC=gcc CROSS="$TARGET-" \
-    TARGET_CFLAGS="$CFLAGS" BUILDMODE=static FILE_T=luajit.exe \
+    TARGET_CFLAGS="$LUAJIT_CFLAGS" BUILDMODE=static FILE_T=luajit.exe \
     INSTALL_DEP=src/luajit.exe amalg
 make TARGET_SYS=Windows PREFIX="$PREFIX" FILE_T=luajit.exe \
     INSTALL_DEP= install
@@ -478,14 +486,16 @@ pushd ffmpeg
 # silently degrades to /bin/false when missing (-> "dav1d not found using
 # pkg-config"). Pass it explicitly; search dirs come from the global
 # PKG_CONFIG_LIBDIR export above.
+# ffmpeg's configure ignores $CFLAGS/$LDFLAGS entirely (it builds its own), so
+# pass them via --extra-cflags/--extra-ldflags to get sections + LTO flags.
 ./configure --prefix="$PREFIX" --pkg-config=pkg-config --pkg-config-flags="--static" \
     --cross-prefix="$TARGET-" --arch=x86_64 --target-os=mingw32 \
     --enable-cross-compile \
     --enable-gpl --enable-static --disable-shared --disable-{doc,programs} \
     --disable-autodetect --disable-debug --disable-avdevice \
     --enable-runtime-cpudetect --enable-lto=thin \
-    --enable-{zlib,iconv,libdav1d,libjxl,libzimg,schannel} \
-    --enable-d3d11va --enable-d3d12va \
+    --extra-cflags="$CFLAGS" --extra-ldflags="$LDFLAGS" \
+    --enable-{zlib,iconv,libdav1d,libjxl,libzimg,schannel,d3d11va,d3d12va} \
     --disable-encoders \
     --enable-encoder={libjxl,png,ac3,dca,eac3,truehd} \
     --disable-{librav1e,librsvg,openal} \
@@ -511,14 +521,15 @@ mpv_args=(
     -Db_lto=true
     -Db_lto_mode=thin
     # meson issue 10172: --prefer-static meson searches for libiconv only in
-    # the compiler's own directories. -Wl,-s: link-time strip (mpv-win strips
-    # in the ld wrapper); there is no install step here, so meson's b_strip
-    # would never fire.
-    -Dc_link_args="-L$PREFIX/lib -liconv -Wl,-s"
+    # the compiler's own directories.
+    # NOTE: -Dc_args/-Dc_link_args override (not append to) the CFLAGS/LDFLAGS
+    # environment variables, so they are re-added here or mpv would silently
+    # lose -march=znver3 / -flto=thin / the trimming flags.
+    -Dc_link_args="-L$PREFIX/lib -liconv $LDFLAGS"
     # uchardet master deprecates uchardet_get_charset, which mpv master still
     # uses (and mpv builds with -Werror) -- silence until mpv switches API.
-    -Dc_args="-Wno-deprecated-declarations" \
-    -Dcpp_link_args="-L$PREFIX/lib -liconv -Wl,-s"
+    -Dc_args="-Wno-deprecated-declarations $CFLAGS"
+    -Dcpp_link_args="-L$PREFIX/lib -liconv $LDFLAGS"
     -Dgpl=$gpl
     -Dlua=luajit
     -D{d3d11,iconv,lcms2,libarchive,libbluray,shaderc,spirv-cross,uchardet,vulkan,win32-smtc,zimg,zlib}=enabled
@@ -534,5 +545,7 @@ endgroup
 group "Packaging"
 mkdir -p artifact
 cp build/mpv.{exe,com} artifact/
+# strip symbols/debug info that --gc-sections cannot remove
+$TARGET-strip -s artifact/mpv.exe artifact/mpv.com || true
 ls -l artifact
 endgroup
