@@ -68,8 +68,12 @@ export LDFLAGS="-Wl,--gc-sections -Wl,--icf=all -Wl,-O3 -Wl,--lto-O3 -Wl,--lto-C
 # codegen from scratch every time.
 export LDFLAGS="$LDFLAGS -Wl,--thinlto-cache-dir=$PWD/thinlto-cache"
 mkdir -p "$PWD/thinlto-cache"
-# PE: drop the relocation section. Delete this line if your lld rejects it.
-export LDFLAGS="$LDFLAGS -Wl,-Xlink=-release"
+# PE: drop the relocation section (mpv-win's mstorsjo toolchain uses it).
+# Kept OFF here: --extra-ldflags is also used by FFmpeg's configure probes,
+# and some Kosm8/llvm-mingw lld builds reject -Xlink, which would surface as
+# "compiler cannot create executables" before FFmpeg even starts compiling.
+# Re-enable only after verifying your lld accepts it:
+# export LDFLAGS="$LDFLAGS -Wl,-Xlink=-release"
 export PKG_CONFIG=pkg-config
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
 
@@ -427,19 +431,30 @@ endgroup
 group "Building LuaJIT"
 $gitclone -b v2.1 https://github.com/LuaJIT/LuaJIT.git
 pushd LuaJIT
-# LuaJIT is the one package that does NOT get -flto=thin/-ffunction-sections:
-# its amalgamated build + self-modifying codegen miscompiles under LTO, and the
-# LuaJIT Makefile scrubs unknown flags anyway. Plain -O3 -march only.
+# LuaJIT is the ONE package that runs the *host* GCC (minilua / buildvm / the
+# architecture probe in src/Makefile). A globally exported CFLAGS carrying
+# clang-only -flto=thin leaks into that host build:
+#   cc1: error: unrecognized argument to '-flto=' option: 'thin'
+#   Makefile:270: *** Unsupported target architecture.  Stop.
+# Note it dies on "make clean" already, because the probe runs at parse time.
+# Run the whole LuaJIT build in a subshell with CFLAGS/CXXFLAGS/LDFLAGS removed
+# from the environment. The parent shell keeps them for FFmpeg / mpv below.
+# TARGET_CFLAGS (make command-line var, always wins over the Makefile) feeds
+# only the cross clang: plain -O3/-march, NO LTO and NO section flags, because
+# LuaJIT's amalgamated build + self-modifying codegen dislikes LTO.
 LUAJIT_CFLAGS="-O3 -pipe -march=znver3"
 # libm is the only private dep on llvm-mingw
 sed -i 's/^Libs.private:.*/Libs.private: -lm/' etc/luajit.pc
 # FILE_T and INSTALL_DEP are only needed to glue the install target
-make TARGET_SYS=Windows clean
-make TARGET_SYS=Windows PREFIX="$PREFIX" HOST_CC=gcc CROSS="$TARGET-" \
-    TARGET_CFLAGS="$LUAJIT_CFLAGS" BUILDMODE=static FILE_T=luajit.exe \
-    INSTALL_DEP=src/luajit.exe amalg
-make TARGET_SYS=Windows PREFIX="$PREFIX" FILE_T=luajit.exe \
-    INSTALL_DEP= install
+(
+    unset CFLAGS CXXFLAGS LDFLAGS
+    make TARGET_SYS=Windows clean
+    make TARGET_SYS=Windows PREFIX="$PREFIX" HOST_CC=gcc CROSS="$TARGET-" \
+        TARGET_CFLAGS="$LUAJIT_CFLAGS" BUILDMODE=static FILE_T=luajit.exe \
+        INSTALL_DEP=src/luajit.exe amalg
+    make TARGET_SYS=Windows PREFIX="$PREFIX" FILE_T=luajit.exe \
+        INSTALL_DEP= install
+)
 popd
 endgroup
 
