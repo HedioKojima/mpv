@@ -51,10 +51,23 @@ export AR=$TARGET-ar
 export RANLIB=$TARGET-ranlib
 export NM=$TARGET-nm
 # -O3 baseline, Zen 3+ only (znver3 binaries do NOT run on Zen1/Zen2/Intel).
-export CFLAGS="-O3 -pipe -march=znver3"
+# -f{function,data}-sections: compile-time section split so the final
+# --gc-sections pass drops unreferenced code per-function instead of
+# per-object (mpv-win relies on the same pairing via its ld wrapper).
+export CFLAGS="-O3 -pipe -march=znver3 -mtune=znver3 -ffunction-sections -fdata-sections"
 export CXXFLAGS="$CFLAGS"
 export PKG_CONFIG=pkg-config
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
+# Link-time size trimming: env-injected equivalent of mpv-win's ld.lld
+# wrapper (llvm-ld.in, which injects --gc-sections --icf=all on every link).
+# --gc-sections needs the section split above; --icf=all folds identical
+# functions (proven safe across this whole dep set in mpv-win). meson /
+# cmake / autotools all consume LDFLAGS, probe links included -- that only
+# costs a bit of configure time, no correctness risk (gc keeps every
+# referenced section). The wrapper's -O3 --lto-O3 --lto-CGO3 are already
+# covered by CFLAGS -O3 through the clang driver, and a thinlto cache dir is
+# pointless on one-shot CI runners, so neither is replicated.
+export LDFLAGS="-Wl,--gc-sections -Wl,--icf=all"
 
 # meson cross file. prefer_static/wrap_mode=nofallback here apply to every
 # meson package including mpv: no leftover libs, no meson wraps.
@@ -471,7 +484,8 @@ pushd ffmpeg
     --enable-gpl --enable-static --disable-shared --disable-{doc,programs} \
     --disable-autodetect --disable-debug --disable-avdevice \
     --enable-runtime-cpudetect --enable-lto=thin \
-    --enable-{zlib,iconv,libdav1d,libjxl,libzimg,schannel,d3d11va,d3d12va} \
+    --enable-{zlib,iconv,libdav1d,libjxl,libzimg,schannel} \
+    --enable-d3d11va --enable-d3d12va \
     --disable-encoders \
     --enable-encoder={libjxl,png,ac3,dca,eac3,truehd} \
     --disable-{librav1e,librsvg,openal} \
@@ -497,12 +511,14 @@ mpv_args=(
     -Db_lto=true
     -Db_lto_mode=thin
     # meson issue 10172: --prefer-static meson searches for libiconv only in
-    # the compiler's own directories.
-    -Dc_link_args="-L$PREFIX/lib -liconv"
+    # the compiler's own directories. -Wl,-s: link-time strip (mpv-win strips
+    # in the ld wrapper); there is no install step here, so meson's b_strip
+    # would never fire.
+    -Dc_link_args="-L$PREFIX/lib -liconv -Wl,-s"
     # uchardet master deprecates uchardet_get_charset, which mpv master still
     # uses (and mpv builds with -Werror) -- silence until mpv switches API.
     -Dc_args="-Wno-deprecated-declarations" \
-    -Dcpp_link_args="-L$PREFIX/lib -liconv"
+    -Dcpp_link_args="-L$PREFIX/lib -liconv -Wl,-s"
     -Dgpl=$gpl
     -Dlua=luajit
     -D{d3d11,iconv,lcms2,libarchive,libbluray,shaderc,spirv-cross,uchardet,vulkan,win32-smtc,zimg,zlib}=enabled
