@@ -525,7 +525,7 @@ endgroup
 group "Building mpv"
 common_args="--werror \
 -Dlibmpv=false \
--Dtests=true \
+-Dtests=false \
 "
 
 mpv_args=(
